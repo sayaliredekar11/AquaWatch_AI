@@ -126,7 +126,14 @@ export default function WaterMap() {
                 <Popup className="custom-popup">
                   <div className="space-y-2 p-1 text-slate-800 min-w-[220px]">
                     <div className="border-b border-slate-100 pb-1.5">
-                      <p className="font-bold text-sm text-slate-900">{loc.name}</p>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <p className="font-bold text-sm text-slate-900">{loc.name}</p>
+                        {loc.is_demo && (
+                          <span className="rounded bg-amber-100 border border-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wide shrink-0">
+                            DEMO
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-slate-500 capitalize">
                         {loc.water_body_type} &middot; {loc.location_name}
                       </p>
@@ -202,10 +209,16 @@ export default function WaterMap() {
 
                     <button
                       type="button"
-                      onClick={() => navigate('/intelligence')}
-                      className="w-full mt-2 rounded bg-ocean py-1 text-center text-xs font-semibold text-white hover:bg-[#0c627a] transition-colors"
+                      onClick={() =>
+                        navigate(
+                          `/intelligence?location_id=${encodeURIComponent(
+                            loc.location_id || loc.water_body_id
+                          )}`
+                        )
+                      }
+                      className="w-full mt-2 rounded bg-ocean py-1.5 text-center text-xs font-semibold text-white hover:bg-[#0c627a] transition-colors shadow-2xs"
                     >
-                      View Intelligence
+                      View Water Quality Trends
                     </button>
                   </div>
                 </Popup>

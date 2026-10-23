@@ -1,23 +1,30 @@
 """
-AquaWatch AI - Authentication & Authorization Router
+AquaWatch AI - Authentication & Authorization Router (Lab Authority Policy)
 
 Endpoints:
-- POST /auth/register       : User registration (assigns CITIZEN role by default)
-- POST /auth/login          : OAuth2 compatible form login (returns signed JWT)
-- GET  /auth/me             : Safe profile information of the current authenticated user
-- GET  /auth/test/citizen   : Protected route requiring CITIZEN role
-- GET  /auth/test/lab       : Protected route requiring LAB_AUTHORITY role
-- GET  /auth/test/official  : Protected route requiring POLLUTION_OFFICIAL role
-- GET  /auth/test/admin     : Protected route requiring ADMIN role
+- POST /auth/register               : Invitation-based registration for authorized Laboratory Authorities
+- POST /auth/login                  : OAuth2 form login (strictly restricted to LAB_AUTHORITY; returns signed JWT)
+- GET  /auth/invitations/validate   : Validate an invitation token before signup submission
+- POST /auth/invitations            : Protected endpoint to generate a new invitation (LAB_AUTHORITY only)
+- GET  /auth/me                     : Safe profile information of the current authenticated Lab Authority
+- GET  /auth/test/lab               : Protected test route requiring LAB_AUTHORITY role
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timezone, timedelta
+import hashlib
+import secrets
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User, UserRole
+from app.models import LabInvitation, User, UserRole
 from app.schemas import (
+    LabInvitationCreate,
+    LabInvitationResponse,
+    LabInvitationValidationResponse,
     RoleTestResponse,
     TokenResponse,
     UserRegisterRequest,
@@ -35,28 +42,80 @@ router = APIRouter(prefix="/auth", tags=["Authentication & Authorization"])
 
 
 # ==========================================================
-# 1. User Registration
+# 1. Invitation-Based Lab Authority Registration
 # ==========================================================
 @router.post(
     "/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Register a new user account",
+    summary="Register a new Laboratory Authority account with a valid invitation",
 )
 def register_user(
     payload: UserRegisterRequest,
     db: Session = Depends(get_db),
 ):
     """
-    Register a new user account:
-    - Validates email and password length
-    - Checks for duplicate emails
-    - Hashes password using Argon2
-    - Enforces default 'CITIZEN' role (public registration cannot claim privileged roles)
+    Authorized Laboratory Authority registration:
+    - Requires a cryptographically verified signup invitation token.
+    - Public requests without a valid invitation token are strictly rejected.
+    - Single-use and expiration constraints are enforced.
+    - Role is permanently and securely assigned as LAB_AUTHORITY by the server.
+    - Client can never specify or override the account role.
     """
-    normalized_email = payload.email.strip().lower()
+    # 1. Require invitation token
+    if not payload.invitation_token or not payload.invitation_token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Public self-registration is disabled. A valid signup invitation token is required "
+                "to register as a Laboratory Authority. Contact your system administrator to request an invitation."
+            ),
+        )
 
-    # Verify email uniqueness
+    clean_token = payload.invitation_token.strip()
+    token_hash = hashlib.sha256(clean_token.encode("utf-8")).hexdigest()
+
+    # 2. Look up invitation record by token hash (raw token is never stored in DB)
+    invitation = (
+        db.query(LabInvitation)
+        .filter(LabInvitation.token_hash == token_hash)
+        .first()
+    )
+
+    if not invitation:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid invitation token. Please verify the code or request a new invitation.",
+        )
+
+    # 3. Check if already used
+    if invitation.is_used:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This invitation token has already been used. Each invitation is strictly single-use.",
+        )
+
+    # 4. Check expiration
+    now_utc = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if now_utc > expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This invitation token has expired. Please request a new invitation from an administrator.",
+        )
+
+    # 5. Check designated email restriction if present
+    normalized_email = payload.email.strip().lower()
+    if invitation.email and invitation.email.strip().lower() != normalized_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This invitation token is restricted to the email address '{invitation.email}'.",
+        )
+
+    # 6. Verify email uniqueness
     existing_user = db.query(User).filter(User.email == normalized_email).first()
     if existing_user:
         raise HTTPException(
@@ -64,19 +123,22 @@ def register_user(
             detail="Email is already registered. Please log in or use a different email address.",
         )
 
-    # Securely hash password
+    # 7. Create new Lab Authority user (role is hardcoded on server; client cannot override)
     hashed_pwd = hash_password(payload.password)
-
-    # Create new normal user
     new_user = User(
         name=payload.name.strip(),
         email=normalized_email,
         hashed_password=hashed_pwd,
-        role=UserRole.NORMAL_USER,
+        role=UserRole.LAB_AUTHORITY,
         is_active=True,
     )
 
     db.add(new_user)
+
+    # 8. Mark invitation as used
+    invitation.is_used = True
+    invitation.used_at = now_utc
+
     db.commit()
     db.refresh(new_user)
 
@@ -84,12 +146,130 @@ def register_user(
 
 
 # ==========================================================
-# 2. User Login (OAuth2 Password Request Form)
+# 2. Validate Invitation Token (Public pre-flight check)
+# ==========================================================
+@router.get(
+    "/invitations/validate",
+    response_model=LabInvitationValidationResponse,
+    summary="Validate an invitation token before submitting registration",
+)
+def validate_invitation(
+    token: str = Query(..., min_length=1, description="Signup invitation token"),
+    db: Session = Depends(get_db),
+):
+    """
+    Checks the validity, email restriction, and expiration of a signup invitation token.
+    Safe for frontend validation without leaking internal hashes or credentials.
+    """
+    clean_token = token.strip()
+    token_hash = hashlib.sha256(clean_token.encode("utf-8")).hexdigest()
+
+    invitation = (
+        db.query(LabInvitation)
+        .filter(LabInvitation.token_hash == token_hash)
+        .first()
+    )
+
+    if not invitation:
+        return {
+            "valid": False,
+            "email": None,
+            "expires_at": None,
+            "message": "Invalid invitation token. Please check the code provided.",
+        }
+
+    if invitation.is_used:
+        return {
+            "valid": False,
+            "email": invitation.email,
+            "expires_at": invitation.expires_at,
+            "message": "This invitation token has already been used.",
+        }
+
+    now_utc = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if now_utc > expires_at:
+        return {
+            "valid": False,
+            "email": invitation.email,
+            "expires_at": invitation.expires_at,
+            "message": "This invitation token has expired.",
+        }
+
+    return {
+        "valid": True,
+        "email": invitation.email,
+        "expires_at": invitation.expires_at,
+        "message": "Invitation token is valid. You may complete registration.",
+    }
+
+
+# ==========================================================
+# 3. Create Invitation Token (Protected for LAB_AUTHORITY)
+# ==========================================================
+@router.post(
+    "/invitations",
+    response_model=LabInvitationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Generate a signup invitation token for a new Lab Authority (Lab Authority only)",
+)
+def create_invitation(
+    payload: LabInvitationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.LAB_AUTHORITY)),
+):
+    """
+    Generates a cryptographically secure, unpredictable, single-use, expiring invitation token.
+    Only authenticated Laboratory Authorities or administrators may issue invitations.
+    The raw token is returned once and NEVER stored unhashed in the database.
+    """
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+    now_utc = datetime.now(timezone.utc)
+    expires_at = now_utc + timedelta(hours=payload.expires_in_hours)
+
+    target_email = payload.email.strip().lower() if payload.email else None
+
+    # Check if target email is already registered
+    if target_email:
+        existing = db.query(User).filter(User.email == target_email).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"User with email '{target_email}' is already registered.",
+            )
+
+    new_invitation = LabInvitation(
+        token_hash=token_hash,
+        email=target_email,
+        invited_by=current_user.email,
+        created_at=now_utc,
+        expires_at=expires_at,
+        is_used=False,
+    )
+
+    db.add(new_invitation)
+    db.commit()
+
+    return {
+        "invitation_token": raw_token,
+        "email": target_email,
+        "expires_at": expires_at,
+        "message": "Invitation created successfully. Deliver the token securely to the recipient.",
+    }
+
+
+# ==========================================================
+# 4. Lab Authority Login (OAuth2 Password Request Form)
 # ==========================================================
 @router.post(
     "/login",
     response_model=TokenResponse,
-    summary="Authenticate and receive JWT access token",
+    summary="Authenticate and receive JWT access token (Lab Authority Only)",
 )
 def login_user(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -100,6 +280,7 @@ def login_user(
     - Accepts username (user's email) and password
     - Verifies credentials against Argon2 hash
     - Checks active account status
+    - Restricts login exclusively to accounts with the LAB_AUTHORITY role
     - Returns signed JWT bearer access token
     """
     normalized_email = form_data.username.strip().lower()
@@ -120,6 +301,17 @@ def login_user(
             detail="Account is inactive. Please contact system administrator.",
         )
 
+    # Enforce role restriction: Login is strictly reserved for Laboratory Authorities
+    if user.role != UserRole.LAB_AUTHORITY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Access restricted: This portal is reserved exclusively for authorized Laboratory Authorities. "
+                "Public monitoring features do not require an account. "
+                "To request laboratory access, contact the system administrator."
+            ),
+        )
+
     # Generate JWT token
     access_token, expires_in = create_access_token(
         data={"sub": user.email, "role": user.role.value}
@@ -133,7 +325,7 @@ def login_user(
 
 
 # ==========================================================
-# 3. Current User Profile
+# 5. Current User Profile
 # ==========================================================
 @router.get(
     "/me",
@@ -151,7 +343,7 @@ def get_user_profile(
 
 
 # ==========================================================
-# 4. Role-Based Access Control Test Endpoints
+# 6. Role-Based Access Control Test Endpoints
 # ==========================================================
 @router.get(
     "/test/normal-user",

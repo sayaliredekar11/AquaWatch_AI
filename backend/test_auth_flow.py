@@ -1,22 +1,23 @@
 """
-AquaWatch AI - Authentication & Authorization Verification Suite (Two Roles)
+AquaWatch AI - Authentication & Authorization Verification Suite (Lab Authority Restriction)
 
-Verifies all 12 required testing scenarios for the simplified two-role system:
-1. A new registration receives NORMAL_USER.
-2. Registration cannot grant LAB_AUTHORITY by submitting a role field.
-3. Duplicate email registration is rejected with HTTP 400.
-4. Correct login credentials produce a valid token.
-5. Incorrect credentials are rejected with HTTP 401.
-6. Missing or invalid tokens receive HTTP 401.
-7. A normal user can read permitted water-quality records / profile.
-8. A normal user receives HTTP 403 when attempting a laboratory-only write operation.
+Verifies all 12 testing scenarios for the Lab Authority only authentication model:
+1. Public registration is disabled with HTTP 403 Forbidden.
+2. Registration tampering is blocked with HTTP 403 Forbidden.
+3. Normal users (NORMAL_USER in DB) cannot log in; rejected with HTTP 403 Forbidden.
+4. Correct Lab Authority credentials produce a valid Bearer access token.
+5. Incorrect credentials rejected with HTTP 401 Unauthorized.
+6. Missing or invalid tokens receive HTTP 401 Unauthorized.
+7. Public monitoring endpoints (GIS, dashboard summary, overview) are accessible without login.
+8. Unauthenticated and non-lab requests to lab write/test endpoints receive 401 / 403.
 9. A laboratory authority can perform permitted write operations.
-10. Both roles can access their own authenticated profile.
-11. No old role accidentally grants privileges (tokens with old role values receive 403 / 401).
-12. Existing CRUD, GIS, dashboard, and authentication functionality continues to work.
+10. Lab Authority can access its own authenticated profile (/auth/me).
+11. Obsolete or tampered role tokens cannot access privileged endpoints.
+12. Existing GIS, dashboard, and health checks continue to work.
 """
 
 import sys
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -30,7 +31,7 @@ client = TestClient(app)
 
 def run_all_tests():
     print("=" * 70)
-    print("RUNNING AQUAWATCH AI TWO-ROLE AUTH & RBAC VERIFICATION SUITE")
+    print("RUNNING AQUAWATCH AI LAB AUTHORITY AUTH & RBAC VERIFICATION SUITE")
     print("=" * 70)
 
     db: Session = SessionLocal()
@@ -54,26 +55,46 @@ def run_all_tests():
         db.rollback()
         print(f"Warning during cleanup: {e}")
 
+    # Seed an existing NORMAL_USER directly into DB to test that normal users cannot log in
+    normal_user = User(
+        name="Alex Normal",
+        email="test_normal@aquawatch.org",
+        hashed_password=hash_password("Password123!"),
+        role=UserRole.NORMAL_USER,
+        is_active=True,
+    )
+    # Seed an authorized LAB_AUTHORITY directly into DB (representing administrative provisioning)
+    lab_user = User(
+        name="Dr. Lab Authority",
+        email="test_lab@aquawatch.org",
+        hashed_password=hash_password("LabSecret123!"),
+        role=UserRole.LAB_AUTHORITY,
+        is_active=True,
+    )
+    db.add(normal_user)
+    db.add(lab_user)
+    db.commit()
+
     results = {}
 
     # -------------------------------------------------------------
-    # Scenario 1: New registration receives NORMAL_USER
+    # Scenario 1: Public registration is disabled with HTTP 403
     # -------------------------------------------------------------
     reg_payload = {
-        "name": "Alex Normal",
-        "email": "test_normal@aquawatch.org",
+        "name": "Jane Public",
+        "email": "jane@aquawatch.org",
         "password": "Password123!",
     }
     r = client.post("/auth/register", json=reg_payload)
-    if r.status_code == 201 and r.json().get("role") == "NORMAL_USER" and "hashed_password" not in r.json():
-        results["1. Registration Default Role is NORMAL_USER"] = "PASS"
-        print("[PASS] Scenario 1: New user received NORMAL_USER as default role.")
+    if r.status_code == 403 and "disabled" in r.text.lower():
+        results["1. Public Self-Registration Disabled (403)"] = "PASS"
+        print("[PASS] Scenario 1: Public self-registration rejected with HTTP 403 Forbidden.")
     else:
-        results["1. Registration Default Role is NORMAL_USER"] = f"FAIL ({r.status_code}, {r.text})"
-        print(f"[FAIL] Scenario 1: {results['1. Registration Default Role is NORMAL_USER']}")
+        results["1. Public Self-Registration Disabled (403)"] = f"FAIL ({r.status_code}, {r.text})"
+        print(f"[FAIL] Scenario 1: {results['1. Public Self-Registration Disabled (403)']}")
 
     # -------------------------------------------------------------
-    # Scenario 2: Registration cannot grant LAB_AUTHORITY by submitting a role field
+    # Scenario 2: Registration role tampering is blocked with HTTP 403
     # -------------------------------------------------------------
     hacker_payload = {
         "name": "Attacker Trying Lab Role",
@@ -82,46 +103,50 @@ def run_all_tests():
         "role": "LAB_AUTHORITY",
     }
     r = client.post("/auth/register", json=hacker_payload)
-    if r.status_code == 201 and r.json().get("role") == "NORMAL_USER":
-        results["2. Registration Role Tampering Blocked"] = "PASS"
-        print("[PASS] Scenario 2: Client-supplied role was ignored; assigned NORMAL_USER.")
+    if r.status_code == 403:
+        results["2. Registration Role Tampering Blocked (403)"] = "PASS"
+        print("[PASS] Scenario 2: Public registration tampering blocked with HTTP 403.")
     else:
-        results["2. Registration Role Tampering Blocked"] = f"FAIL (Assigned: {r.json().get('role')})"
-        print(f"[FAIL] Scenario 2: {results['2. Registration Role Tampering Blocked']}")
+        results["2. Registration Role Tampering Blocked (403)"] = f"FAIL ({r.status_code})"
+        print(f"[FAIL] Scenario 2: {results['2. Registration Role Tampering Blocked (403)']}")
 
     # -------------------------------------------------------------
-    # Scenario 3: Duplicate email registration is rejected with HTTP 400
+    # Scenario 3: Normal user login blocked with HTTP 403
     # -------------------------------------------------------------
-    r = client.post("/auth/register", json=reg_payload)
-    if r.status_code == 400 and "already registered" in r.text.lower():
-        results["3. Duplicate Email Rejection (400)"] = "PASS"
-        print("[PASS] Scenario 3: Duplicate email was rejected with HTTP 400.")
-    else:
-        results["3. Duplicate Email Rejection (400)"] = f"FAIL ({r.status_code})"
-        print(f"[FAIL] Scenario 3: {results['3. Duplicate Email Rejection (400)']}")
-
-    # -------------------------------------------------------------
-    # Scenario 4: Correct login credentials produce a valid token
-    # -------------------------------------------------------------
-    login_data = {
+    normal_login_data = {
         "username": "test_normal@aquawatch.org",
         "password": "Password123!",
     }
-    r = client.post("/auth/login", data=login_data)
-    login_json = r.json()
-    normal_token = login_json.get("access_token")
-    if r.status_code == 200 and normal_token and login_json.get("token_type") == "bearer":
-        results["4. Valid Login Produces Bearer Token"] = "PASS"
-        print("[PASS] Scenario 4: Successful login returned valid Bearer access token.")
+    r = client.post("/auth/login", data=normal_login_data)
+    if r.status_code == 403 and "restricted" in r.text.lower():
+        results["3. Normal User Login Blocked (403)"] = "PASS"
+        print("[PASS] Scenario 3: Normal user login rejected with HTTP 403 Forbidden.")
     else:
-        results["4. Valid Login Produces Bearer Token"] = f"FAIL ({r.status_code})"
-        print(f"[FAIL] Scenario 4: {results['4. Valid Login Produces Bearer Token']}")
+        results["3. Normal User Login Blocked (403)"] = f"FAIL ({r.status_code})"
+        print(f"[FAIL] Scenario 3: {results['3. Normal User Login Blocked (403)']}")
+
+    # -------------------------------------------------------------
+    # Scenario 4: Lab Authority login produces valid Bearer token
+    # -------------------------------------------------------------
+    lab_login_data = {
+        "username": "test_lab@aquawatch.org",
+        "password": "LabSecret123!",
+    }
+    r = client.post("/auth/login", data=lab_login_data)
+    login_json = r.json()
+    lab_token = login_json.get("access_token")
+    if r.status_code == 200 and lab_token and login_json.get("token_type") == "bearer":
+        results["4. Lab Authority Login Produces Bearer Token"] = "PASS"
+        print("[PASS] Scenario 4: Lab Authority login returned valid Bearer access token.")
+    else:
+        results["4. Lab Authority Login Produces Bearer Token"] = f"FAIL ({r.status_code})"
+        print(f"[FAIL] Scenario 4: {results['4. Lab Authority Login Produces Bearer Token']}")
 
     # -------------------------------------------------------------
     # Scenario 5: Incorrect credentials rejected with HTTP 401
     # -------------------------------------------------------------
     bad_login = {
-        "username": "test_normal@aquawatch.org",
+        "username": "test_lab@aquawatch.org",
         "password": "WrongPassword999!",
     }
     r = client.post("/auth/login", data=bad_login)
@@ -144,37 +169,27 @@ def run_all_tests():
         results["6. Missing/Invalid Token Rejected (401)"] = f"FAIL (Missing: {r_missing.status_code}, Invalid: {r_invalid.status_code})"
         print(f"[FAIL] Scenario 6: {results['6. Missing/Invalid Token Rejected (401)']}")
 
-    # Create a laboratory user via administrative seeding
-    lab_user = User(
-        name="Dr. Lab Authority",
-        email="test_lab@aquawatch.org",
-        hashed_password=hash_password("LabSecret123!"),
-        role=UserRole.LAB_AUTHORITY,
-        is_active=True,
-    )
-    db.add(lab_user)
-    db.commit()
-
-    lab_login = client.post("/auth/login", data={"username": "test_lab@aquawatch.org", "password": "LabSecret123!"})
-    lab_token = lab_login.json().get("access_token")
-
-    normal_headers = {"Authorization": f"Bearer {normal_token}"}
     lab_headers = {"Authorization": f"Bearer {lab_token}"}
+    # Create a synthetic token for normal user to test backend RBAC defenses
+    normal_token, _ = create_access_token(data={"sub": "test_normal@aquawatch.org", "role": "NORMAL_USER"})
+    normal_headers = {"Authorization": f"Bearer {normal_token}"}
 
     # -------------------------------------------------------------
-    # Scenario 7: Normal user can read permitted water-quality records
+    # Scenario 7: Public monitoring endpoints accessible without login
     # -------------------------------------------------------------
-    r_read_wb = client.get("/water-bodies", headers=normal_headers)
-    r_read_wq = client.get("/water-quality", headers=normal_headers)
-    if r_read_wb.status_code == 200 and r_read_wq.status_code == 200:
-        results["7. Normal User Reads Permitted Records"] = "PASS"
-        print("[PASS] Scenario 7: NORMAL_USER successfully read water bodies and water quality records.")
+    r_gis = client.get("/gis/locations")
+    r_dash = client.get("/dashboard/summary")
+    r_overview = client.get("/dashboard/water-quality-overview")
+    r_recent = client.get("/dashboard/recent-measurements")
+    if all(res.status_code == 200 for res in [r_gis, r_dash, r_overview, r_recent]):
+        results["7. Public Monitoring Views Accessible (200)"] = "PASS"
+        print("[PASS] Scenario 7: GIS, summary, overview, and recents accessible without auth.")
     else:
-        results["7. Normal User Reads Permitted Records"] = f"FAIL (WB: {r_read_wb.status_code}, WQ: {r_read_wq.status_code})"
-        print(f"[FAIL] Scenario 7: {results['7. Normal User Reads Permitted Records']}")
+        results["7. Public Monitoring Views Accessible (200)"] = "FAIL"
+        print(f"[FAIL] Scenario 7: Public views failed unauthenticated access.")
 
     # -------------------------------------------------------------
-    # Scenario 8: Normal user receives HTTP 403 on laboratory-only write operation
+    # Scenario 8: Non-lab & unauthenticated requests blocked from lab endpoints
     # -------------------------------------------------------------
     wb_create_payload = {
         "name": "TEST_AUTH_Ganges",
@@ -183,14 +198,15 @@ def run_all_tests():
         "latitude": 25.3176,
         "longitude": 82.9739,
     }
-    r_wb_write = client.post("/water-bodies", json=wb_create_payload, headers=normal_headers)
-    r_lab_test = client.get("/auth/test/lab", headers=normal_headers)
-    if r_wb_write.status_code == 403 and r_lab_test.status_code == 403:
-        results["8. Normal User Blocked from Lab Writes (403)"] = "PASS"
-        print("[PASS] Scenario 8: NORMAL_USER received HTTP 403 on laboratory write and test endpoints.")
+    r_unauth_write = client.post("/water-bodies", json=wb_create_payload)
+    r_norm_write = client.post("/water-bodies", json=wb_create_payload, headers=normal_headers)
+    r_norm_test = client.post("/water-quality/test", json={"sample_name": "Test", "ph": 7.0, "dissolved_oxygen": 7.0, "bod": 2.0, "turbidity": 3.0, "tds": 250.0}, headers=normal_headers)
+    if r_unauth_write.status_code == 401 and r_norm_write.status_code == 403 and r_norm_test.status_code == 403:
+        results["8. Non-Lab Blocked from Writes/Tests (401/403)"] = "PASS"
+        print("[PASS] Scenario 8: Unauthenticated returned 401, NORMAL_USER returned 403 on lab endpoints.")
     else:
-        results["8. Normal User Blocked from Lab Writes (403)"] = f"FAIL (Write: {r_wb_write.status_code}, LabTest: {r_lab_test.status_code})"
-        print(f"[FAIL] Scenario 8: {results['8. Normal User Blocked from Lab Writes (403)']}")
+        results["8. Non-Lab Blocked from Writes/Tests (401/403)"] = f"FAIL (Unauth: {r_unauth_write.status_code}, NormWrite: {r_norm_write.status_code}, NormTest: {r_norm_test.status_code})"
+        print(f"[FAIL] Scenario 8: {results['8. Non-Lab Blocked from Writes/Tests (401/403)']}")
 
     # -------------------------------------------------------------
     # Scenario 9: Laboratory authority can perform permitted write operations
@@ -198,8 +214,6 @@ def run_all_tests():
     r_lab_create = client.post("/water-bodies", json=wb_create_payload, headers=lab_headers)
     if r_lab_create.status_code == 201:
         created_wb_id = r_lab_create.json()["id"]
-        # Create a water quality record as lab authority
-        from datetime import datetime, timezone
         wq_payload = {
             "water_body_id": created_wb_id,
             "ph": 7.4,
@@ -221,51 +235,40 @@ def run_all_tests():
         print(f"[FAIL] Scenario 9: {results['9. Lab Authority Performs Permitted Writes']}")
 
     # -------------------------------------------------------------
-    # Scenario 10: Both roles can access their own authenticated profile
+    # Scenario 10: Lab Authority can access its own authenticated profile
     # -------------------------------------------------------------
-    r_norm_me = client.get("/auth/me", headers=normal_headers)
     r_lab_me = client.get("/auth/me", headers=lab_headers)
-    if (
-        r_norm_me.status_code == 200
-        and r_norm_me.json().get("role") == "NORMAL_USER"
-        and r_lab_me.status_code == 200
-        and r_lab_me.json().get("role") == "LAB_AUTHORITY"
-    ):
-        results["10. Both Roles Access Own Profile"] = "PASS"
-        print("[PASS] Scenario 10: Both NORMAL_USER and LAB_AUTHORITY accessed their own profile.")
+    if r_lab_me.status_code == 200 and r_lab_me.json().get("role") == "LAB_AUTHORITY":
+        results["10. Lab Authority Profile Access (/auth/me)"] = "PASS"
+        print("[PASS] Scenario 10: LAB_AUTHORITY successfully accessed own profile.")
     else:
-        results["10. Both Roles Access Own Profile"] = f"FAIL (Normal: {r_norm_me.status_code}, Lab: {r_lab_me.status_code})"
-        print(f"[FAIL] Scenario 10: {results['10. Both Roles Access Own Profile']}")
+        results["10. Lab Authority Profile Access (/auth/me)"] = f"FAIL (Lab: {r_lab_me.status_code})"
+        print(f"[FAIL] Scenario 10: {results['10. Lab Authority Profile Access (/auth/me)']}")
 
     # -------------------------------------------------------------
-    # Scenario 11: No old role accidentally grants privileges
+    # Scenario 11: Obsolete or tampered roles denied privileges
     # -------------------------------------------------------------
-    # Token with an obsolete role (e.g., 'ADMIN' or 'CITIZEN' or 'POLLUTION_OFFICIAL')
     obsolete_token_admin, _ = create_access_token(data={"sub": "test_normal@aquawatch.org", "role": "ADMIN"})
-    # But database user has role NORMAL_USER, so checking against DB role rejects lab operations
     r_old_role = client.get("/auth/test/lab", headers={"Authorization": f"Bearer {obsolete_token_admin}"})
     if r_old_role.status_code == 403:
-        results["11. Obsolete Roles Denied Privileges"] = "PASS"
+        results["11. Obsolete Roles Denied Privileges (403)"] = "PASS"
         print("[PASS] Scenario 11: Old role references in tokens cannot access privileged lab endpoints (HTTP 403).")
     else:
-        results["11. Obsolete Roles Denied Privileges"] = f"FAIL ({r_old_role.status_code})"
-        print(f"[FAIL] Scenario 11: {results['11. Obsolete Roles Denied Privileges']}")
+        results["11. Obsolete Roles Denied Privileges (403)"] = f"FAIL ({r_old_role.status_code})"
+        print(f"[FAIL] Scenario 11: {results['11. Obsolete Roles Denied Privileges (403)']}")
 
     # -------------------------------------------------------------
-    # Scenario 12: Existing CRUD, GIS, dashboard, and authentication continue to work
+    # Scenario 12: Existing foundation endpoints continue to work
     # -------------------------------------------------------------
     r_root = client.get("/")
     r_health = client.get("/health")
     r_health_db = client.get("/health/db")
-    r_gis = client.get("/gis/locations")
-    r_dash = client.get("/dashboard/summary")
-    r_overview = client.get("/dashboard/water-quality-overview")
 
-    if all(res.status_code == 200 for res in [r_root, r_health, r_health_db, r_gis, r_dash, r_overview]):
-        results["12. Existing Foundation, GIS & Dashboards Intact"] = "PASS"
-        print("[PASS] Scenario 12: Root, health, GIS locations, dashboard summary, and overview all operational (HTTP 200).")
+    if all(res.status_code == 200 for res in [r_root, r_health, r_health_db]):
+        results["12. Existing Foundation Endpoints Intact (200)"] = "PASS"
+        print("[PASS] Scenario 12: Root, health, and health/db operational (HTTP 200).")
     else:
-        results["12. Existing Foundation, GIS & Dashboards Intact"] = "FAIL"
+        results["12. Existing Foundation Endpoints Intact (200)"] = "FAIL"
         print(f"[FAIL] Scenario 12: Foundation endpoints degraded.")
 
     # Cleanup test records
@@ -285,7 +288,7 @@ def run_all_tests():
     print("FINAL TEST SUMMARY:")
     all_passed = True
     for test_name, status_str in results.items():
-        print(f"  {test_name:<45} : {status_str}")
+        print(f"  {test_name:<48} : {status_str}")
         if status_str != "PASS":
             all_passed = False
     print("=" * 70)

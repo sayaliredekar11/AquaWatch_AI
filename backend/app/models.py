@@ -161,3 +161,32 @@ class WaterQualityRecord(Base):
 
     def __repr__(self):
         return f"<WaterQualityRecord(id={self.id}, water_body_id={self.water_body_id}, measured_at='{self.measured_at}')>"
+
+
+# ==========================================================
+# 4. Lab Authority Signup Invitation Model
+# ==========================================================
+
+class LabInvitation(Base):
+    """
+    Stores cryptographically secure signup invitations for Laboratory Authorities.
+    Raw invitation tokens are NEVER stored in the database; only their SHA-256 hashes are persisted.
+    """
+    __tablename__ = "lab_invitations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    email = Column(String(255), nullable=True, index=True)  # Optional specific email restriction
+    invited_by = Column(String(255), nullable=True)         # Admin email or 'CLI'
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    is_used = Column(Boolean, nullable=False, default=False, server_default="false")
+    used_at = Column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self):
+        return f"<LabInvitation(id={self.id}, email='{self.email}', is_used={self.is_used})>"
+

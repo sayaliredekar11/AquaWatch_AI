@@ -4,18 +4,23 @@ AquaWatch AI - GIS & Mapping Router
 Provides map marker and location data for Leaflet.js / OpenStreetMap frontend integration.
 
 Endpoints:
-- GET /gis/locations               : Public map markers with valid coordinates and latest measurements
-- GET /gis/locations/{id}          : Detailed marker view with measurement history
+- GET /gis/locations                    : Public map markers with valid coordinates and latest measurements
+- GET /gis/locations/{location_id}       : Detailed marker view with latest snapshot & recent records
+- GET /gis/locations/{location_id}/history: Chronological trend data sequence for Recharts visualization
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.schemas import GISLocationDetail, GISLocationMarker
-from app.services.gis_service import get_location_detail, get_monitoring_locations
+from app.schemas import GISLocationDetail, GISLocationMarker, LocationHistoryResponse
+from app.services.gis_service import (
+    get_location_detail,
+    get_location_history_service,
+    get_monitoring_locations,
+)
 
 router = APIRouter(prefix="/gis", tags=["GIS & Maps"])
 
@@ -48,9 +53,10 @@ def list_map_locations(
     """
     Returns water bodies with valid latitude and longitude coordinates for map rendering.
     - Excludes locations with missing or out-of-bounds coordinates
+    - Combines verified database stations with distinct Maharashtra demonstration stations
     - Includes the latest water quality measurement for each location
-    - Includes status and reason indicators (UNKNOWN pending regulatory standard)
-    - Publicly accessible to support citizen map views
+    - Clearly flags synthetic data with is_demo=True
+    - Publicly accessible without authentication
     """
     if start_date and end_date and start_date > end_date:
         raise HTTPException(
@@ -69,17 +75,17 @@ def list_map_locations(
 
 
 # ==========================================================
-# 2. Get Location Details and Measurement History
+# 2. Get Location Details and Latest Measurement Summary
 # ==========================================================
 @router.get(
-    "/locations/{water_body_id}",
+    "/locations/{location_id}",
     response_model=GISLocationDetail,
-    summary="Get location details and recent measurement history for a map marker",
+    summary="Get location details and measurement snapshot for a map marker",
 )
 def get_map_location_details(
-    water_body_id: int,
+    location_id: str,
     recent_limit: int = Query(
-        10,
+        15,
         ge=1,
         le=50,
         description="Maximum number of recent measurement logs to include",
@@ -87,20 +93,77 @@ def get_map_location_details(
     db: Session = Depends(get_db),
 ):
     """
-    Returns complete metadata and recent measurement history for a selected water body marker.
-    - Returns HTTP 404 if the water body does not exist
+    Returns complete metadata and recent measurement history for a selected station.
+    - Accepts stable location identifiers (e.g. 'demo_loc_001') or database IDs (e.g. '1')
+    - Returns HTTP 404 if the station does not exist in demo or production databases
     - Publicly accessible for interactive map popups and side-panels
     """
     detail = get_location_detail(
         db=db,
-        water_body_id=water_body_id,
+        location_id=location_id,
         recent_limit=recent_limit,
     )
 
     if not detail:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Water body with ID {water_body_id} does not exist.",
+            detail=f"Monitoring location with ID '{location_id}' does not exist.",
         )
 
     return detail
+
+
+# ==========================================================
+# 3. Get Chronological Measurement History for Trend Intelligence
+# ==========================================================
+@router.get(
+    "/locations/{location_id}/history",
+    response_model=LocationHistoryResponse,
+    summary="Get chronological measurement trend history for a specific location",
+)
+def get_map_location_history(
+    location_id: str,
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Filter historical records sampled on or after this timestamp",
+    ),
+    end_date: Optional[datetime] = Query(
+        None,
+        description="Filter historical records sampled on or before this timestamp",
+    ),
+    limit: int = Query(
+        100,
+        ge=1,
+        le=200,
+        description="Maximum number of historical records to return",
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns time-series observations for trend analysis on the Water Quality Intelligence page.
+    - Resolves both synthetic demonstration stations and database water bodies
+    - Supports date range filtering (start_date, end_date)
+    - Returns HTTP 404 if the requested location identifier is unknown
+    - Publicly accessible without authentication
+    """
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="start_date must be earlier than or equal to end_date.",
+        )
+
+    history = get_location_history_service(
+        db=db,
+        location_id=location_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+
+    if not history:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring location with ID '{location_id}' does not exist.",
+        )
+
+    return history

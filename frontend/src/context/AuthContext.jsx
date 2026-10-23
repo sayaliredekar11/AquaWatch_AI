@@ -15,7 +15,12 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {
       const saved = localStorage.getItem(USER_KEY)
-      return saved ? JSON.parse(saved) : null
+      if (!saved) return null
+      const parsed = JSON.parse(saved)
+      // Only retain saved session if user is a Lab Authority
+      const isLab =
+        parsed?.role === 'LAB_AUTHORITY' || parsed?.role === 'lab_authority'
+      return isLab ? parsed : null
     } catch (_) {
       return null
     }
@@ -33,8 +38,18 @@ export function AuthProvider({ children }) {
 
       try {
         const profile = await getProfileApi()
-        setUser(profile)
-        localStorage.setItem(USER_KEY, JSON.stringify(profile))
+        const isLab =
+          profile?.role === 'LAB_AUTHORITY' || profile?.role === 'lab_authority'
+
+        if (!isLab) {
+          // If a non-lab account token was stored, clear it immediately
+          console.warn('Non-lab account detected; clearing session token.')
+          removeToken()
+          setUser(null)
+        } else {
+          setUser(profile)
+          localStorage.setItem(USER_KEY, JSON.stringify(profile))
+        }
       } catch (err) {
         // If token has expired or is invalid, safely clear state
         console.warn('Session verification failed, logging out:', err.message)
@@ -49,15 +64,28 @@ export function AuthProvider({ children }) {
   }, [])
 
   /**
-   * Log in user against FastAPI backend
+   * Log in user against FastAPI backend (restricted to Laboratory Authorities)
    */
   const login = async (email, password) => {
     try {
       const tokenData = await loginApi(email, password)
       setToken(tokenData.access_token)
 
-      // Fetch authentic user profile from /auth/me
+      // Fetch verified user profile from /auth/me
       const profile = await getProfileApi()
+      const isLab =
+        profile?.role === 'LAB_AUTHORITY' || profile?.role === 'lab_authority'
+
+      if (!isLab) {
+        removeToken()
+        setUser(null)
+        return {
+          success: false,
+          error:
+            'Access restricted: This portal is exclusively for authorized Laboratory Authorities. Public features do not require an account.',
+        }
+      }
+
       setUser(profile)
       localStorage.setItem(USER_KEY, JSON.stringify(profile))
 
@@ -71,19 +99,19 @@ export function AuthProvider({ children }) {
       setUser(null)
       return {
         success: false,
-        error: err.message || 'Login failed. Please check your credentials.',
+        error:
+          err.message || 'Login failed. Please check your credentials.',
       }
     }
   }
 
   /**
-   * Register a new user against FastAPI backend (defaults to citizen/normal user)
+   * Register a new Lab Authority account with an administrative invitation token
    */
-  const signup = async ({ name, email, password }) => {
+  const signup = async ({ name, email, password, invitation_token }) => {
     try {
-      await registerApi(name, email, password)
-
-      // Automatically log in newly registered user
+      await registerApi(name, email, password, invitation_token)
+      // Automatically log in newly created Lab Authority
       return await login(email, password)
     } catch (err) {
       return {
@@ -94,16 +122,16 @@ export function AuthProvider({ children }) {
   }
 
   /**
-   * Log out current user and clear local storage
+   * Log out current Lab Authority and clear session tokens
    */
   const logout = () => {
     removeToken()
     setUser(null)
   }
 
-  const isLabAuthority =
-    user?.role === 'LAB_AUTHORITY' || user?.role === 'lab_authority'
-  const isNormalUser = user && !isLabAuthority
+  const isLabAuthority = Boolean(
+    user && (user.role === 'LAB_AUTHORITY' || user.role === 'lab_authority')
+  )
 
   return (
     <AuthContext.Provider
@@ -114,7 +142,6 @@ export function AuthProvider({ children }) {
         signup,
         logout,
         isLabAuthority,
-        isNormalUser,
       }}
     >
       {children}

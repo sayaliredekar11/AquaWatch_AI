@@ -94,14 +94,28 @@ export async function loginApi(email, password) {
   return tokenData
 }
 
-export async function registerApi(name, email, password) {
+export async function registerApi(name, email, password, invitation_token) {
   return await request('/auth/register', {
     method: 'POST',
     body: {
       name: name.trim(),
       email: email.trim().toLowerCase(),
       password,
+      invitation_token: invitation_token ? invitation_token.trim() : '',
     },
+  })
+}
+
+export async function validateInvitationApi(token) {
+  return await request(`/auth/invitations/validate?token=${encodeURIComponent(token.trim())}`, {
+    method: 'GET',
+  })
+}
+
+export async function createInvitationApi(data = {}) {
+  return await request('/auth/invitations', {
+    method: 'POST',
+    body: data,
   })
 }
 
@@ -122,7 +136,18 @@ export async function getGisLocationsApi() {
 }
 
 export async function getGisLocationDetailApi(id) {
-  return await request(`/gis/locations/${id}`, {
+  return await request(`/gis/locations/${encodeURIComponent(id)}`, {
+    method: 'GET',
+  })
+}
+
+export async function getLocationHistoryApi(locationId, params = {}) {
+  const query = new URLSearchParams()
+  if (params.start_date) query.append('start_date', params.start_date)
+  if (params.end_date) query.append('end_date', params.end_date)
+  if (params.limit) query.append('limit', params.limit)
+  const qs = query.toString() ? `?${query.toString()}` : ''
+  return await request(`/gis/locations/${encodeURIComponent(locationId)}/history${qs}`, {
     method: 'GET',
   })
 }
@@ -198,6 +223,19 @@ export async function createWaterQualityRecordApi(data) {
   return await request('/water-quality', {
     method: 'POST',
     body: data,
+  })
+}
+
+export async function testWaterQualityApi(testPayload) {
+  return await request('/water-quality/test', {
+    method: 'POST',
+    body: testPayload,
+  })
+}
+
+export async function getDemoSamplesApi() {
+  return await request('/water-quality/demo-samples', {
+    method: 'GET',
   })
 }
 

@@ -25,8 +25,8 @@ export default function ProtectedRoute({ children, allowedRoles }) {
     )
 
     if (requiresLab && !isLabAuthority) {
-      // Normal user trying to access lab dashboard or test water -> redirect to Home
-      return <Navigate to="/" replace />
+      // Non-lab user trying to access lab dashboard or test water -> redirect to Lab Login
+      return <Navigate to="/login" state={{ from: location }} replace />
     }
   }
 

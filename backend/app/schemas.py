@@ -11,7 +11,7 @@ Day 5: GIS Mapping & Dashboard Analytics Schemas
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models import UserRole
@@ -44,14 +44,37 @@ class DbHealthResponse(BaseModel):
 class UserRegisterRequest(BaseModel):
     """
     Schema for user registration.
-    Only accepts name, email, and password.
-    Public registration can NEVER supply a role; role is assigned securely by the backend.
+    Authorized Lab Authority signup requires an administrative invitation token.
+    Public registration can NEVER supply or override a role; role is assigned securely by the backend.
     """
     name: str = Field(..., min_length=2, max_length=100, description="User's full name")
     email: EmailStr = Field(..., description="Valid unique email address")
     password: str = Field(..., min_length=6, max_length=128, description="Password (at least 6 characters)")
+    invitation_token: Optional[str] = Field(None, description="Administrative signup invitation token")
 
     model_config = ConfigDict(extra="ignore")
+
+
+class LabInvitationCreate(BaseModel):
+    """Schema for generating a new invitation (by administrator or existing Lab Authority)."""
+    email: Optional[EmailStr] = Field(None, description="Optional email restriction for this invitation")
+    expires_in_hours: int = Field(48, ge=1, le=720, description="Invitation validity duration in hours (default 48)")
+
+
+class LabInvitationResponse(BaseModel):
+    """Response returned upon successful creation of an invitation token."""
+    invitation_token: str
+    email: Optional[str] = None
+    expires_at: datetime
+    message: str
+
+
+class LabInvitationValidationResponse(BaseModel):
+    """Response schema for checking the validity of an invitation token."""
+    valid: bool
+    email: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    message: str
 
 
 class UserResponse(BaseModel):
@@ -200,7 +223,8 @@ class GISLocationMarker(BaseModel):
     Map marker payload for GIS visualizations (Leaflet.js / OpenStreetMap).
     Guaranteed to include valid latitude and longitude coordinates.
     """
-    water_body_id: int
+    water_body_id: Union[int, str]
+    location_id: Optional[str] = None
     name: str
     water_body_type: str
     location_name: str
@@ -210,24 +234,58 @@ class GISLocationMarker(BaseModel):
     latest_measurements: Optional[MeasurementSnapshot] = None
     water_quality_status: str = Field("UNKNOWN", description="Current status indicator: UNKNOWN (pending standards)")
     status_reason: str = Field(..., description="Explanation of water quality status")
+    is_demo: bool = Field(False, description="Whether this is an illustrative demonstration location")
 
 
 class GISLocationDetail(BaseModel):
     """
     Detailed map marker inspection payload including measurement history.
     """
-    water_body_id: int
+    water_body_id: Union[int, str]
+    location_id: Optional[str] = None
     name: str
     water_body_type: str
     location_name: str
     latitude: Optional[float]
     longitude: Optional[float]
-    created_at: datetime
+    created_at: Optional[datetime] = None
     latest_measured_at: Optional[datetime] = None
     latest_measurements: Optional[MeasurementSnapshot] = None
     water_quality_status: str
     status_reason: str
-    recent_measurements: List[WaterQualityRecordResponse] = Field(default_factory=list)
+    is_demo: bool = Field(False, description="Whether this is an illustrative demonstration location")
+    recent_measurements: List[Any] = Field(default_factory=list)
+
+
+class LocationHistoryItem(BaseModel):
+    """Individual dated observation in water quality trend sequence."""
+    id: Union[int, str]
+    water_body_id: Optional[Union[int, str]] = None
+    location_id: Optional[str] = None
+    measured_at: datetime
+    ph: Optional[float] = None
+    dissolved_oxygen: Optional[float] = None
+    bod: Optional[float] = None
+    turbidity: Optional[float] = None
+    tds: Optional[float] = None
+    electrical_conductivity: Optional[float] = None
+    nitrate: Optional[float] = None
+    temperature: Optional[float] = None
+    is_demo: bool = False
+
+
+class LocationHistoryResponse(BaseModel):
+    """Location metadata paired with chronological historical observations."""
+    location_id: str
+    water_body_id: Union[int, str]
+    name: str
+    water_body_type: str
+    location_name: str
+    latitude: float
+    longitude: float
+    is_demo: bool = False
+    total_records: int
+    records: List[LocationHistoryItem] = Field(default_factory=list)
 
 
 # ==========================================================
@@ -335,3 +393,87 @@ class PredictionResponse(BaseModel):
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Prediction confidence score or probability (0.0 to 1.0)")
     model_version: Optional[str] = Field(None, description="Identifier of the model artifact or endpoint")
     features_used: Dict[str, Optional[float]] = Field(..., description="Copy of input features passed to the model")
+
+
+# ==========================================================
+# Water Quality Sample Testing & Demo Schemas
+# ==========================================================
+
+class ParameterAssessment(BaseModel):
+    """
+    Detailed assessment of an individual water quality parameter against standard baseline.
+    """
+    parameter: str = Field(..., description="Parameter key (e.g. 'ph', 'dissolved_oxygen')")
+    display_name: str = Field(..., description="Parameter display name (e.g. 'pH')")
+    unit: str = Field(..., description="Measurement unit (e.g. 'mg/L')")
+    value: Optional[float] = Field(None, description="Submitted measurement value")
+    standard_range: str = Field(..., description="Configured acceptable standard range (e.g. '6.5 - 8.5')")
+    status: str = Field(..., description="Parameter evaluation status: 'PASS', 'FAIL', or 'INSUFFICIENT'")
+    message: str = Field(..., description="Detailed explanation of this parameter's assessment")
+
+
+class WaterQualityTestRequest(BaseModel):
+    """
+    Schema for validating and testing arbitrary water quality measurement samples.
+    Supports predefined dummy samples and laboratory test inputs.
+    Parameters are optional to allow evaluating incomplete samples as INCONCLUSIVE.
+    """
+    sample_name: str = Field(default="Custom Sample", min_length=1, max_length=100, description="Identifier or name of sample")
+    is_demo: bool = Field(default=True, description="Flag indicating if the sample is an illustrative test input")
+    ph: Optional[float] = Field(None, description="pH value (acceptable range: 6.5 to 8.5)")
+    dissolved_oxygen: Optional[float] = Field(None, description="Dissolved Oxygen in mg/L (acceptable: >= 4.0 mg/L)")
+    bod: Optional[float] = Field(None, description="Biochemical Oxygen Demand in mg/L (acceptable: <= 3.0 mg/L)")
+    turbidity: Optional[float] = Field(None, description="Turbidity in NTU (acceptable: <= 5.0 NTU)")
+    tds: Optional[float] = Field(None, description="Total Dissolved Solids in mg/L (acceptable: <= 500.0 mg/L)")
+    electrical_conductivity: Optional[float] = Field(None, description="Electrical Conductivity in µS/cm")
+    nitrate: Optional[float] = Field(None, description="Nitrate in mg/L")
+    temperature: Optional[float] = Field(None, description="Water temperature in °C")
+    save_to_db: bool = Field(default=False, description="Explicit action flag: persist this record to PostgreSQL")
+    water_body_id: Optional[int] = Field(default=None, description="Target water body ID if explicit persistence is requested")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "sample_name": "Sample A",
+                "is_demo": True,
+                "ph": 7.2,
+                "dissolved_oxygen": 7.0,
+                "bod": 2.0,
+                "turbidity": 3.0,
+                "tds": 250.0,
+                "electrical_conductivity": 320.0,
+                "nitrate": 1.2,
+                "temperature": 22.0,
+                "save_to_db": False,
+            }
+        }
+    )
+
+
+class WaterQualityTestResponse(BaseModel):
+    """
+    Structured response returned when evaluating a water quality test sample.
+    Includes rule-based safety classification: SAFE, HARMFUL, or INCONCLUSIVE.
+    """
+    status: str = Field(default="SUCCESS", description="Evaluation status (e.g. SUCCESS)")
+    classification: str = Field(..., description="Safety classification: SAFE, HARMFUL, or INCONCLUSIVE")
+    result_type: str = Field(default="DEMO_RULE_BASED", description="Assessment type: DEMO_RULE_BASED")
+    sample_name: str = Field(..., description="Name or identifier of tested sample")
+    is_demo: bool = Field(default=True, description="True if marked as demo data")
+    standard_name: str = Field(..., description="Name of the standard baseline evaluated against")
+    standard_intended_use: str = Field(..., description="Intended water use category for the standard")
+    parameters_received: Dict[str, Optional[float]] = Field(..., description="Submitted measurements")
+    parameter_assessments: List[ParameterAssessment] = Field(default_factory=list, description="Parameter-by-parameter assessments")
+    failed_parameters: List[str] = Field(default_factory=list, description="Parameters that failed criteria")
+    passed_parameters: List[str] = Field(default_factory=list, description="Parameters that passed criteria")
+    reasons: List[str] = Field(default_factory=list, description="Reasons explaining the classification decision")
+    warnings: List[str] = Field(default_factory=list, description="Boundary or caution warnings")
+    limitations: str = Field(..., description="Scientific limitations of this 5-parameter screening")
+    evaluated_at: datetime = Field(..., description="Server timestamp of evaluation")
+    persisted_to_database: bool = Field(default=False, description="Whether this sample was saved into PostgreSQL")
+    persisted_record_id: Optional[int] = Field(default=None, description="PostgreSQL record ID if saved")
+    ml_model_status: str = Field(default="UNAVAILABLE", description="Status of ML model deployment")
+    ml_model_details: str = Field(..., description="Explanation regarding ML model integration")
+    message: str = Field(..., description="Human-readable server summary")
+
+
