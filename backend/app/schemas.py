@@ -354,19 +354,22 @@ class OfficialDashboardSummaryResponse(BaseModel):
 # Day 4 Machine Learning Prediction Schemas
 # ==========================================================
 
+
 class PredictionInput(BaseModel):
-    """
-    Input feature vector for water quality ML prediction.
-    Features map directly to chemical and physical parameters monitored in Day 3.
-    """
-    ph: float = Field(..., ge=0.0, le=14.0, description="pH value (0.0 to 14.0)")
-    dissolved_oxygen: float = Field(..., ge=0.0, description="Dissolved Oxygen (mg/L)")
-    bod: float = Field(..., ge=0.0, description="Biochemical Oxygen Demand (mg/L)")
-    turbidity: float = Field(..., ge=0.0, description="Turbidity (NTU)")
-    tds: float = Field(..., ge=0.0, description="Total Dissolved Solids (mg/L)")
-    electrical_conductivity: Optional[float] = Field(None, ge=0.0, description="Electrical Conductivity (µS/cm)")
-    nitrate: Optional[float] = Field(None, ge=0.0, description="Nitrate (mg/L)")
-    temperature: Optional[float] = Field(None, ge=-20.0, le=100.0, description="Water temperature (°C)")
+    """Input measurements required by the trained 12-feature WQI model."""
+
+    dissolved_oxygen: float = Field(..., ge=0.0)
+    ph: float = Field(..., ge=0.0, le=14.0)
+    bod: float = Field(..., ge=0.0)
+    cod: float = Field(..., ge=0.0)
+    nitrate: float = Field(..., ge=0.0)
+    ammonia_n: float = Field(..., ge=0.0)
+    turbidity: float = Field(..., ge=0.0)
+    tds: float = Field(..., ge=0.0)
+    chlorides: float = Field(..., ge=0.0)
+    sulphate: float = Field(..., ge=0.0)
+    fecal_coliform: float = Field(..., ge=0.0)
+    total_coliform: float = Field(..., ge=0.0)
 
     model_config = ConfigDict(
         json_schema_extra={

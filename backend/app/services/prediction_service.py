@@ -122,67 +122,84 @@ class PredictionService:
             features_used=features,
         )
 
+    
     async def _execute_local_model(self, features: Dict[str, Any]) -> PredictionResponse:
-        """
-        Loads and executes a local model artifact (Option A).
-        """
+        """Load the saved model artifact and predict WQI using all 12 features."""
         if not os.path.exists(self.model_path):
             raise MLServiceUnavailableException(
-                f"Local model artifact file not found at path '{self.model_path}'. "
-                "Please ensure the trained model artifact has been placed in the configured location."
+                f"Model file not found: {self.model_path}"
             )
 
         try:
-            # Dynamically attempt joblib or pickle loading
-            import joblib  # type: ignore
-            model = joblib.load(self.model_path)
-        except ImportError:
-            try:
-                import pickle
-                with open(self.model_path, "rb") as f:
-                    model = pickle.load(f)
-            except Exception as e:
-                raise MLServiceIntegrationException(
-                    f"Failed to load local model artifact: {str(e)}"
+            import joblib
+
+            artifact = joblib.load(self.model_path)
+
+            if not isinstance(artifact, dict) or "model" not in artifact:
+                raise ValueError(
+                    "Expected a model artifact dictionary containing 'model' and 'features'."
                 )
-        except Exception as e:
-            raise MLServiceIntegrationException(
-                f"Error initializing model artifact: {str(e)}"
-            )
 
-        try:
-            # Documented input structure: list of values ordered by features
-            # Can be adapted once teammate confirms feature ordering or DataFrame expectation
+            model = artifact["model"]
+            model_features = artifact.get("features")
+
+            if not model_features or len(model_features) != 12:
+                raise ValueError(
+                    "The saved model must contain the exact 12-feature list."
+                )
+
+            feature_mapping = {
+                "Dissolved O2": "dissolved_oxygen",
+                "pH": "ph",
+                "BOD": "bod",
+                "COD": "cod",
+                "Nitrate N": "nitrate",
+                "Amonia N": "ammonia_n",
+                "Turbidity": "turbidity",
+                "Total Dissolved Solids": "tds",
+                "Chlorides": "chlorides",
+                "Sulphate": "sulphate",
+                "Fecal Coliform": "fecal_coliform",
+                "Total Coliform": "total_coliform",
+            }
+
+            missing = [
+                feature_mapping[name]
+                for name in model_features
+                if name not in feature_mapping
+                or feature_mapping[name] not in features
+                or features[feature_mapping[name]] is None
+            ]
+
+            if missing:
+                raise ValueError(
+                    "Missing required model measurements: " + ", ".join(missing)
+                )
+
             feature_vector = [
-                features.get("ph"),
-                features.get("dissolved_oxygen"),
-                features.get("bod"),
-                features.get("turbidity"),
-                features.get("tds"),
-                features.get("electrical_conductivity", 0.0),
-                features.get("nitrate", 0.0),
-                features.get("temperature", 20.0),
+                float(features[feature_mapping[name]])
+                for name in model_features
             ]
 
             raw_pred = model.predict([feature_vector])
-            prediction_label = str(raw_pred[0])
-
-            confidence: Optional[float] = None
-            if hasattr(model, "predict_proba"):
-                probas = model.predict_proba([feature_vector])
-                confidence = float(max(probas[0]))
+            wqi_score = float(raw_pred[0])
 
             return PredictionResponse(
                 status="SUCCESS",
-                prediction=prediction_label,
-                confidence=confidence,
+                prediction=str(wqi_score),
+                confidence=None,
                 model_version=f"local-{os.path.basename(self.model_path)}",
-                features_used=features,
+                features_used={
+                    feature_mapping[name]: float(features[feature_mapping[name]])
+                    for name in model_features
+                },
             )
+
         except Exception as e:
             raise MLServiceIntegrationException(
-                f"Inference execution failed on local model: {str(e)}"
+                f"Local model prediction failed: {str(e)}"
             )
+
 
     async def _execute_remote_api(self, features: Dict[str, Any]) -> PredictionResponse:
         """
@@ -225,7 +242,7 @@ class PredictionService:
             )
         except Exception as e:
             raise MLServiceIntegrationException(
-                f"Failed to parse ML microservice response: {str(e)}"
+                "Failed to parse ML microservice response: {str(e)}"
             )
 
 
