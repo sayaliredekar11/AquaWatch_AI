@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Gauge, History, AlertTriangle, Map, ArrowRight } from 'lucide-react'
+import { Gauge, History, AlertTriangle, Map, ArrowRight, FlaskConical, LayoutDashboard } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 const features = [
@@ -142,26 +142,27 @@ export default function Home() {
               </span>
               <h3 className="text-xl font-bold text-white">Public Visitors & Laboratory Authorities</h3>
               <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                Public visitors can access location maps, regional water quality trends, and methodology. Laboratory authorities log in to submit new sample measurements and monitor laboratory operations.
+                Public visitors can freely browse interactive GIS maps, regional water quality averages, and historical intelligence without needing an account. Authorized laboratory personnel sign in to test water samples, calculate WQI assessments, and manage monitored sites.
               </p>
             </div>
 
             <div className="shrink-0 flex items-center gap-3">
-              {!user && (
-                <>
-                  <Link
-                    to="/login"
-                    className="btn bg-white text-slate-900 hover:bg-slate-100 font-semibold text-xs px-4 py-2.5"
-                  >
-                    Sign In
-                  </Link>
-                  <Link
-                    to="/signup"
-                    className="btn bg-ocean text-white hover:bg-[#0c627a] font-semibold text-xs px-4 py-2.5"
-                  >
-                    Sign Up
-                  </Link>
-                </>
+              {isLabAuthority ? (
+                <Link
+                  to="/dashboard"
+                  className="btn bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-semibold text-xs px-4 py-2.5 flex items-center gap-2 shadow-sm"
+                >
+                  <LayoutDashboard className="h-4 w-4" />
+                  <span>Open Lab Dashboard</span>
+                </Link>
+              ) : (
+                <Link
+                  to="/login"
+                  className="btn bg-ocean text-white hover:bg-[#0c627a] font-semibold text-xs px-4 py-2.5 flex items-center gap-2 shadow-sm"
+                >
+                  <FlaskConical className="h-4 w-4" />
+                  <span>Lab Authority Portal</span>
+                </Link>
               )}
             </div>
           </div>
