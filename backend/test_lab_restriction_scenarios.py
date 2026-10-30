@@ -138,25 +138,37 @@ def verify_scenarios():
     r_unauth_write_wb = client.post("/water-bodies", json={"name": "Test", "water_body_type": "river", "location_name": "Test", "latitude": 18.5, "longitude": 73.8})
     r_unauth_write_wq = client.post("/water-quality", json={"water_body_id": 1, "ph": 7.0, "dissolved_oxygen": 7.0, "bod": 2.0, "turbidity": 3.0, "tds": 250.0})
     r_unauth_official = client.get("/dashboard/official-summary")
-    r_unauth_register = client.post("/auth/register", json={"name": "Attacker", "email": "att@test.org", "password": "Password123!"})
+    
+    # Registration without token creates an account requiring administrator approval (is_active=False)
+    # and login is blocked with 403 Forbidden until approved.
+    db.query(User).filter(User.email == "att_scenario4@test.org").delete()
+    db.commit()
+    r_unauth_register = client.post("/auth/register", json={"name": "Attacker", "email": "att_scenario4@test.org", "password": "Password123!"})
+    r_unapproved_login = client.post("/auth/login", data={"username": "att_scenario4@test.org", "password": "Password123!"})
+    
+    # Clean up test user
+    db.query(User).filter(User.email == "att_scenario4@test.org").delete()
+    db.commit()
 
     if (
         r_unauth_test.status_code == 401
         and r_unauth_write_wb.status_code == 401
         and r_unauth_write_wq.status_code == 401
         and r_unauth_official.status_code == 401
-        and r_unauth_register.status_code == 403
+        and r_unauth_register.status_code == 201
+        and r_unauth_register.json().get("is_active") is False
+        and r_unapproved_login.status_code == 403
     ):
         results["Scenario 4: Protected Routes Block Unauthenticated"] = "PASS"
         print("[PASS] /water-quality/test returned 401 Unauthorized without token.")
         print("[PASS] /water-bodies POST returned 401 Unauthorized without token.")
         print("[PASS] /water-quality POST returned 401 Unauthorized without token.")
         print("[PASS] /dashboard/official-summary returned 401 Unauthorized without token.")
-        print("[PASS] /auth/register returned 403 Forbidden (Public self-registration disabled).")
+        print("[PASS] /auth/register creates unapproved account (is_active=False); login returns 403 pending admin approval.")
     else:
         results["Scenario 4: Protected Routes Block Unauthenticated"] = (
             f"FAIL (Test: {r_unauth_test.status_code}, WB: {r_unauth_write_wb.status_code}, "
-            f"WQ: {r_unauth_write_wq.status_code}, Off: {r_unauth_official.status_code}, Reg: {r_unauth_register.status_code})"
+            f"WQ: {r_unauth_write_wq.status_code}, Off: {r_unauth_official.status_code}, Reg: {r_unauth_register.status_code}, Login: {r_unapproved_login.status_code})"
         )
         print(f"[FAIL] {results['Scenario 4: Protected Routes Block Unauthenticated']}")
 

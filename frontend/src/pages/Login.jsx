@@ -162,7 +162,7 @@ export default function Login() {
               to="/signup"
               className="inline-flex items-center gap-1 text-ocean hover:text-cyan-800 transition-colors font-semibold"
             >
-              <span>Have an invitation token? Sign Up</span>
+              <span>Need a Lab Authority account? Sign Up</span>
             </Link>
             <Link
               to="/map"

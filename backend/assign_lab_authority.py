@@ -7,7 +7,7 @@ Does NOT expose any unauthenticated or remote HTTP promotion endpoints.
 Does NOT require a third application role.
 
 Supported commands:
-  --list                            : List all registered accounts and roles
+  --list                            : List all registered accounts and roles\n  --approve <email>                 : Approve and activate a pending LAB_AUTHORITY account
   --create                          : Directly provision a new LAB_AUTHORITY account
   --invite                          : Generate a cryptographically secure, single-use signup invitation
   --promote <email>                 : Promote an existing account to LAB_AUTHORITY
@@ -28,15 +28,31 @@ from app.security import hash_password
 
 
 def list_users(db: Session):
-    """List all registered users and their current role."""
+    """List all registered users and their current role and status."""
     users = db.query(User).order_by(User.id).all()
-    print("=" * 65)
-    print(f"{'ID':<6} {'Name':<20} {'Email':<25} {'Role':<15}")
-    print("=" * 65)
+    print("=" * 75)
+    print(f"{'ID':<6} {'Name':<20} {'Email':<25} {'Role':<15} {'Status':<10}")
+    print("=" * 75)
     for u in users:
-        print(f"{u.id:<6} {u.name[:18]:<20} {u.email[:23]:<25} {u.role.value:<15}")
-    print("=" * 65)
+        status_str = "ACTIVE" if u.is_active else "PENDING"
+        print(f"{u.id:<6} {u.name[:18]:<20} {u.email[:23]:<25} {u.role.value:<15} {status_str:<10}")
+    print("=" * 75)
 
+
+
+def approve_user(db: Session, email: str):
+    """Approve a pending Laboratory Authority account and activate it."""
+    normalized_email = email.strip().lower()
+    user = db.query(User).filter(User.email == normalized_email).first()
+    if not user:
+        print(f"[ERROR] User with email '{normalized_email}' not found.")
+        sys.exit(1)
+
+    user.role = UserRole.LAB_AUTHORITY
+    user.is_active = True
+    db.commit()
+    db.refresh(user)
+    print(f"[SUCCESS] User '{user.email}' (ID #{user.id}) successfully approved and activated with role 'LAB_AUTHORITY'.")
 
 def promote_user(db: Session, email: str):
     """Promote an existing account to LAB_AUTHORITY."""
@@ -175,6 +191,11 @@ def main():
         help="List all users and their assigned roles",
     )
     group.add_argument(
+        "--approve",
+        metavar="EMAIL",
+        help="Approve and activate a pending Laboratory Authority account",
+    )
+    group.add_argument(
         "--promote",
         metavar="EMAIL",
         help="Promote an existing registered user to LAB_AUTHORITY",
@@ -214,6 +235,8 @@ def main():
     try:
         if args.list:
             list_users(db)
+        elif args.approve:
+            approve_user(db, args.approve)
         elif args.promote:
             promote_user(db, args.promote)
         elif args.demote:

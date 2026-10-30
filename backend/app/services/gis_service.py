@@ -108,6 +108,13 @@ def get_monitoring_locations(
                     electrical_conductivity=rec.electrical_conductivity,
                     nitrate=rec.nitrate,
                     temperature=rec.temperature,
+                    cod=rec.cod,
+                    ammonia_n=rec.ammonia_n,
+                    chlorides=rec.chlorides,
+                    sulphate=rec.sulphate,
+                    fecal_coliform=rec.fecal_coliform,
+                    total_coliform=rec.total_coliform,
+                    wqi_score=rec.wqi_score,
                 )
 
             markers.append(
@@ -117,10 +124,14 @@ def get_monitoring_locations(
                     name=wb.name,
                     water_body_type=wb.water_body_type,
                     location_name=wb.location_name,
+                    district=wb.district,
+                    state=wb.state or "Maharashtra",
                     latitude=wb.latitude,
                     longitude=wb.longitude,
                     latest_measured_at=latest_measured_at,
                     latest_measurements=snapshot,
+                    latest_wqi_score=rec.wqi_score if rec else None,
+                    latest_safety_classification=rec.safety_classification if rec else None,
                     water_quality_status=status,
                     status_reason=reason,
                     is_demo=False,
@@ -272,6 +283,13 @@ def get_location_detail(
             electrical_conductivity=latest_rec.electrical_conductivity,
             nitrate=latest_rec.nitrate,
             temperature=latest_rec.temperature,
+            cod=latest_rec.cod,
+            ammonia_n=latest_rec.ammonia_n,
+            chlorides=latest_rec.chlorides,
+            sulphate=latest_rec.sulphate,
+            fecal_coliform=latest_rec.fecal_coliform,
+            total_coliform=latest_rec.total_coliform,
+            wqi_score=latest_rec.wqi_score,
         )
 
     formatted_recent = [
@@ -284,11 +302,15 @@ def get_location_detail(
         name=water_body.name,
         water_body_type=water_body.water_body_type,
         location_name=water_body.location_name,
+        district=water_body.district,
+        state=water_body.state or "Maharashtra",
         latitude=water_body.latitude,
         longitude=water_body.longitude,
         created_at=water_body.created_at,
         latest_measured_at=latest_measured_at,
         latest_measurements=snapshot,
+        latest_wqi_score=latest_rec.wqi_score if latest_rec else None,
+        latest_safety_classification=latest_rec.safety_classification if latest_rec else None,
         water_quality_status=status,
         status_reason=reason,
         is_demo=False,
@@ -385,10 +407,22 @@ def get_location_history_service(
             electrical_conductivity=r.electrical_conductivity,
             nitrate=r.nitrate,
             temperature=r.temperature,
+            cod=r.cod,
+            ammonia_n=r.ammonia_n,
+            chlorides=r.chlorides,
+            sulphate=r.sulphate,
+            fecal_coliform=r.fecal_coliform,
+            total_coliform=r.total_coliform,
+            sample_name=r.sample_name,
+            wqi_score=r.wqi_score,
+            wqi_status=r.wqi_status,
+            safety_classification=r.safety_classification,
             is_demo=False,
         )
         for r in db_records
     ]
+
+    latest_rec = db_records[-1] if db_records else None
 
     return LocationHistoryResponse(
         location_id=str(water_body.id),
@@ -396,8 +430,13 @@ def get_location_history_service(
         name=water_body.name,
         water_body_type=water_body.water_body_type,
         location_name=water_body.location_name,
+        district=water_body.district,
+        state=water_body.state or "Maharashtra",
         latitude=water_body.latitude,
         longitude=water_body.longitude,
+        latest_wqi_score=latest_rec.wqi_score if latest_rec else None,
+        latest_wqi_status=latest_rec.wqi_status if latest_rec else None,
+        latest_safety_classification=latest_rec.safety_classification if latest_rec else None,
         is_demo=False,
         total_records=len(records),
         records=records,

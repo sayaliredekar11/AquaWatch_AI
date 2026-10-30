@@ -19,6 +19,7 @@ from app.database import get_db
 from app.demo_data import DUMMY_WATER_QUALITY_SAMPLES
 from app.models import User, UserRole, WaterBody, WaterQualityRecord
 from app.schemas import (
+    PredictionInput,
     WaterQualityRecordCreate,
     WaterQualityRecordResponse,
     WaterQualityRecordUpdate,
@@ -52,7 +53,6 @@ def create_water_quality_record(
     - Verifies that the referenced water_body_id exists
     - Validates units and parameter limits (pH 0-14, nonnegative values)
     """
-    # Verify foreign key existence
     water_body = db.query(WaterBody).filter(WaterBody.id == payload.water_body_id).first()
     if not water_body:
         raise HTTPException(
@@ -93,7 +93,6 @@ def list_water_quality_records(
     - Supports pagination (skip, limit capped at 100)
     - Supports optional filtering by water_body_id and measurement date range
     """
-    # Validate date range
     if start_date and end_date and start_date > end_date:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -151,7 +150,7 @@ def get_dummy_test_samples():
     response_model=WaterQualityTestResponse,
     summary="Validate and test a water quality sample",
 )
-def test_water_quality_sample(
+async def test_water_quality_sample(
     payload: WaterQualityTestRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.LAB_AUTHORITY)),
@@ -162,7 +161,7 @@ def test_water_quality_sample(
     - Validates numeric parameters and scientific bounds using Pydantic
     - By default, does NOT insert dummy records into PostgreSQL, preventing skew of real monitoring metrics
     - If explicit saving is requested (save_to_db=True), validates water_body_id and persists record
-    - Checks ML model integration status and never invents arbitrary predictions or safety claims
+    - Checks ML model integration status and computes WQI if all 12 model features are present
     """
     persisted = False
     persisted_record_id = None
@@ -182,7 +181,7 @@ def test_water_quality_sample(
                 detail=f"Monitored water body with ID {payload.water_body_id} does not exist.",
             )
 
-        # Explicitly save record to PostgreSQL
+        # Explicitly save record to PostgreSQL with all 12 parameters
         new_record = WaterQualityRecord(
             water_body_id=payload.water_body_id,
             ph=payload.ph,
@@ -193,6 +192,12 @@ def test_water_quality_sample(
             electrical_conductivity=payload.electrical_conductivity,
             nitrate=payload.nitrate,
             temperature=payload.temperature,
+            cod=payload.cod,
+            ammonia_n=payload.ammonia_n,
+            chlorides=payload.chlorides,
+            sulphate=payload.sulphate,
+            fecal_coliform=payload.fecal_coliform,
+            total_coliform=payload.total_coliform,
             measured_at=datetime.now(timezone.utc),
         )
         db.add(new_record)
@@ -201,28 +206,7 @@ def test_water_quality_sample(
         persisted = True
         persisted_record_id = new_record.id
 
-    # Determine Machine Learning Integration Status
-    prediction_service._refresh_config()
-    if prediction_service.mock_mode:
-        ml_model_status = "MOCK_AVAILABLE"
-        ml_model_details = "Backend test mock mode is active (ML_MOCK_MODE=true)."
-    elif prediction_service.mode == "none":
-        ml_model_status = "UNAVAILABLE"
-        ml_model_details = (
-            "Machine learning prediction model is currently pending deployment from ML teammate "
-            "(ML_INTEGRATION_MODE=none). No fake ML predictions are generated."
-        )
-    elif prediction_service.mode == "file":
-        ml_model_status = "LOCAL_ARTIFACT"
-        ml_model_details = f"Local model configured at {prediction_service.model_path}."
-    elif prediction_service.mode == "api":
-        ml_model_status = "REMOTE_MICROSERVICE"
-        ml_model_details = f"External ML endpoint configured at {prediction_service.service_url}."
-    else:
-        ml_model_status = "UNCONFIGURED"
-        ml_model_details = "ML integration mode unrecognized."
-
-    # Assemble parameter dictionary
+    # Assemble parameter dictionary for rule-based classifier
     parameters_dict = {
         "ph": payload.ph,
         "dissolved_oxygen": payload.dissolved_oxygen,
@@ -232,6 +216,12 @@ def test_water_quality_sample(
         "electrical_conductivity": payload.electrical_conductivity,
         "nitrate": payload.nitrate,
         "temperature": payload.temperature,
+        "cod": payload.cod,
+        "ammonia_n": payload.ammonia_n,
+        "chlorides": payload.chlorides,
+        "sulphate": payload.sulphate,
+        "fecal_coliform": payload.fecal_coliform,
+        "total_coliform": payload.total_coliform,
     }
 
     # Execute Rule-Based Water Safety Evaluation (CPCB Class C / IS 10500 Baseline)
@@ -239,6 +229,55 @@ def test_water_quality_sample(
         measurements=parameters_dict,
         sample_name=payload.sample_name,
     )
+
+    # Check ML Model inference readiness: requires all 12 features
+    ml_feature_keys = [
+        "dissolved_oxygen", "ph", "bod", "cod", "nitrate", "ammonia_n",
+        "turbidity", "tds", "chlorides", "sulphate", "fecal_coliform", "total_coliform"
+    ]
+    missing_ml_features = [k for k in ml_feature_keys if getattr(payload, k) is None]
+
+    ml_prediction = None
+    prediction_service._refresh_config()
+
+    if not missing_ml_features:
+        try:
+            pred_input = PredictionInput(
+                dissolved_oxygen=payload.dissolved_oxygen,
+                ph=payload.ph,
+                bod=payload.bod,
+                cod=payload.cod,
+                nitrate=payload.nitrate,
+                ammonia_n=payload.ammonia_n,
+                turbidity=payload.turbidity,
+                tds=payload.tds,
+                chlorides=payload.chlorides,
+                sulphate=payload.sulphate,
+                fecal_coliform=payload.fecal_coliform,
+                total_coliform=payload.total_coliform,
+            )
+            ml_prediction = await prediction_service.predict(pred_input)
+            ml_model_status = "ACTIVE"
+            ml_model_details = (
+                f"Trained DecisionTreeRegressor executed successfully. "
+                f"Predicted Water Quality Index (WQI): {ml_prediction.wqi_score:.2f}."
+            )
+        except Exception as e:
+            ml_model_status = "ERROR"
+            ml_model_details = f"ML model prediction error: {str(e)}"
+    else:
+        if prediction_service.mock_mode:
+            ml_model_status = "MOCK_AVAILABLE"
+            ml_model_details = "Backend test mock mode is active (ML_MOCK_MODE=true)."
+        elif prediction_service.mode == "none":
+            ml_model_status = "UNAVAILABLE"
+            ml_model_details = "Machine learning prediction model is currently pending deployment."
+        else:
+            ml_model_status = "INCOMPLETE_FEATURES"
+            ml_model_details = (
+                f"ML model requires all 12 parameters to compute WQI. Missing {len(missing_ml_features)} parameter(s): "
+                f"{', '.join(missing_ml_features)}."
+            )
 
     message = (
         f"Water quality sample '{payload.sample_name}' successfully evaluated by FastAPI backend. "
@@ -266,6 +305,7 @@ def test_water_quality_sample(
         persisted_record_id=persisted_record_id,
         ml_model_status=ml_model_status,
         ml_model_details=ml_model_details,
+        ml_prediction=ml_prediction,
         message=message,
     )
 
@@ -327,7 +367,6 @@ def update_water_quality_record(
 
     update_data = payload.model_dump(exclude_unset=True)
 
-    # If updating the foreign key, verify target water body exists
     if "water_body_id" in update_data and update_data["water_body_id"] is not None:
         target_wb = db.query(WaterBody).filter(WaterBody.id == update_data["water_body_id"]).first()
         if not target_wb:

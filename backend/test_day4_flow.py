@@ -12,7 +12,8 @@ Test Coverage:
 8. /predictions/record/{id} returns 404 for nonexistent record
 9. /predictions/record/{id} rejects incomplete measurement record with HTTP 400
 10. /predictions/record/{id} succeeds on complete record without mutating database
-11. Regression verification: Day 1, Day 2, Day 3, and Day 5 endpoints remain fully operational
+11. Real local DecisionTree model artifact inference computes WQI
+12. Regression verification: Day 1, Day 2, Day 3, and Day 5 endpoints remain fully operational
 """
 
 from datetime import datetime, timezone
@@ -31,6 +32,21 @@ from app.services.prediction_service import (
 )
 
 client = TestClient(app)
+
+COMPLETE_12_FEATURE_PAYLOAD = {
+    "dissolved_oxygen": 6.8,
+    "ph": 7.4,
+    "bod": 2.1,
+    "cod": 10.0,
+    "nitrate": 1.2,
+    "ammonia_n": 0.2,
+    "turbidity": 4.5,
+    "tds": 240.0,
+    "chlorides": 25.0,
+    "sulphate": 30.0,
+    "fecal_coliform": 20.0,
+    "total_coliform": 50.0,
+}
 
 
 @pytest.fixture(scope="module")
@@ -110,17 +126,23 @@ def setup_day4_data():
     db.commit()
     db.refresh(wb)
 
-    # 3. Create a complete measurement record
+    # 3. Create a complete measurement record with all 12 model features
     now = datetime.now(timezone.utc)
     rec_complete = WaterQualityRecord(
         water_body_id=wb.id,
         ph=7.5,
         dissolved_oxygen=6.5,
         bod=2.0,
+        cod=10.0,
+        nitrate=1.2,
+        ammonia_n=0.2,
         turbidity=4.0,
         tds=220.0,
+        chlorides=25.0,
+        sulphate=30.0,
+        fecal_coliform=20.0,
+        total_coliform=50.0,
         electrical_conductivity=340.0,
-        nitrate=1.2,
         temperature=22.0,
         measured_at=now,
     )
@@ -165,47 +187,29 @@ def test_prediction_input_validation(setup_day4_data):
     headers = setup_day4_data["headers"]["lab"]
 
     # Invalid pH (< 0) -> 422
-    res_low_ph = client.post(
-        "/predictions/predict",
-        json={"ph": -1.0, "dissolved_oxygen": 6.0, "bod": 2.0, "turbidity": 4.0, "tds": 200.0},
-        headers=headers,
-    )
+    payload_low_ph = {**COMPLETE_12_FEATURE_PAYLOAD, "ph": -1.0}
+    res_low_ph = client.post("/predictions/predict", json=payload_low_ph, headers=headers)
     assert res_low_ph.status_code == 422
 
     # Invalid pH (> 14) -> 422
-    res_high_ph = client.post(
-        "/predictions/predict",
-        json={"ph": 15.0, "dissolved_oxygen": 6.0, "bod": 2.0, "turbidity": 4.0, "tds": 200.0},
-        headers=headers,
-    )
+    payload_high_ph = {**COMPLETE_12_FEATURE_PAYLOAD, "ph": 15.0}
+    res_high_ph = client.post("/predictions/predict", json=payload_high_ph, headers=headers)
     assert res_high_ph.status_code == 422
 
     # Negative dissolved oxygen -> 422
-    res_neg_do = client.post(
-        "/predictions/predict",
-        json={"ph": 7.0, "dissolved_oxygen": -2.0, "bod": 2.0, "turbidity": 4.0, "tds": 200.0},
-        headers=headers,
-    )
+    payload_neg_do = {**COMPLETE_12_FEATURE_PAYLOAD, "dissolved_oxygen": -2.0}
+    res_neg_do = client.post("/predictions/predict", json=payload_neg_do, headers=headers)
     assert res_neg_do.status_code == 422
 
     # Missing required field (e.g. missing turbidity) -> 422
-    res_missing = client.post(
-        "/predictions/predict",
-        json={"ph": 7.0, "dissolved_oxygen": 6.0, "bod": 2.0, "tds": 200.0},
-        headers=headers,
-    )
+    payload_missing = {k: v for k, v in COMPLETE_12_FEATURE_PAYLOAD.items() if k != "turbidity"}
+    res_missing = client.post("/predictions/predict", json=payload_missing, headers=headers)
     assert res_missing.status_code == 422
 
 
 def test_prediction_authorization(setup_day4_data):
     """Scenario 3: Authentication and role-based authorization check."""
-    valid_payload = {
-        "ph": 7.4,
-        "dissolved_oxygen": 6.8,
-        "bod": 2.1,
-        "turbidity": 4.5,
-        "tds": 240.0,
-    }
+    valid_payload = COMPLETE_12_FEATURE_PAYLOAD
 
     # Unauthenticated request -> 401 Unauthorized
     res_unauth = client.post("/predictions/predict", json=valid_payload)
@@ -222,22 +226,13 @@ def test_prediction_authorization(setup_day4_data):
 
 def test_model_unavailable_default_mode(setup_day4_data, monkeypatch):
     """Scenario 4: When ML integration is not deployed (mode='none'), returns HTTP 503."""
-    # Ensure mock mode is disabled and integration is 'none'
     monkeypatch.setenv("ML_MOCK_MODE", "false")
     monkeypatch.setenv("ML_INTEGRATION_MODE", "none")
     prediction_service._refresh_config()
 
-    valid_payload = {
-        "ph": 7.4,
-        "dissolved_oxygen": 6.8,
-        "bod": 2.1,
-        "turbidity": 4.5,
-        "tds": 240.0,
-    }
-
     res = client.post(
         "/predictions/predict",
-        json=valid_payload,
+        json=COMPLETE_12_FEATURE_PAYLOAD,
         headers=setup_day4_data["headers"]["lab"],
     )
     assert res.status_code == 503
@@ -251,17 +246,9 @@ def test_ml_service_timeout_handling(setup_day4_data, monkeypatch):
 
     monkeypatch.setattr(prediction_service, "predict", mock_timeout)
 
-    valid_payload = {
-        "ph": 7.4,
-        "dissolved_oxygen": 6.8,
-        "bod": 2.1,
-        "turbidity": 4.5,
-        "tds": 240.0,
-    }
-
     res = client.post(
         "/predictions/predict",
-        json=valid_payload,
+        json=COMPLETE_12_FEATURE_PAYLOAD,
         headers=setup_day4_data["headers"]["lab"],
     )
     assert res.status_code == 504
@@ -275,17 +262,9 @@ def test_ml_service_invalid_response_handling(setup_day4_data, monkeypatch):
 
     monkeypatch.setattr(prediction_service, "predict", mock_bad_response)
 
-    valid_payload = {
-        "ph": 7.4,
-        "dissolved_oxygen": 6.8,
-        "bod": 2.1,
-        "turbidity": 4.5,
-        "tds": 240.0,
-    }
-
     res = client.post(
         "/predictions/predict",
-        json=valid_payload,
+        json=COMPLETE_12_FEATURE_PAYLOAD,
         headers=setup_day4_data["headers"]["lab"],
     )
     assert res.status_code == 502
@@ -297,17 +276,9 @@ def test_successful_mock_prediction(setup_day4_data, monkeypatch):
     monkeypatch.setenv("ML_MOCK_MODE", "true")
     prediction_service._refresh_config()
 
-    valid_payload = {
-        "ph": 7.4,
-        "dissolved_oxygen": 6.8,
-        "bod": 2.1,
-        "turbidity": 4.5,
-        "tds": 240.0,
-    }
-
     res = client.post(
         "/predictions/predict",
-        json=valid_payload,
+        json=COMPLETE_12_FEATURE_PAYLOAD,
         headers=setup_day4_data["headers"]["lab"],
     )
     assert res.status_code == 200
@@ -336,7 +307,7 @@ def test_predict_from_stored_record_incomplete(setup_day4_data):
         headers=setup_day4_data["headers"]["official"],
     )
     assert res.status_code == 400
-    assert "missing required model parameters" in res.json()["detail"].lower()
+    assert "missing required ml model parameters" in res.json()["detail"].lower()
 
 
 def test_predict_from_stored_record_success_no_mutation(setup_day4_data, monkeypatch):
@@ -362,8 +333,29 @@ def test_predict_from_stored_record_success_no_mutation(setup_day4_data, monkeyp
     db.close()
 
 
+def test_real_local_model_inference(setup_day4_data, monkeypatch):
+    """Scenario 11: Real DecisionTree model artifact loads and computes numerical WQI."""
+    monkeypatch.setenv("ML_MOCK_MODE", "false")
+    monkeypatch.setenv("ML_INTEGRATION_MODE", "file")
+    monkeypatch.setenv("ML_MODEL_PATH", "models/AquaWatchAI_Best_Model.joblib")
+    prediction_service._refresh_config()
+
+    res = client.post(
+        "/predictions/predict",
+        json=COMPLETE_12_FEATURE_PAYLOAD,
+        headers=setup_day4_data["headers"]["lab"],
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "SUCCESS"
+    assert data["wqi_score"] is not None
+    assert isinstance(data["wqi_score"], float)
+    assert "Decision Tree" in data["algorithm"]
+    assert "AquaWatchAI_Best_Model.joblib" in data["model_version"]
+
+
 def test_regression_all_previous_days(setup_day4_data):
-    """Scenario 11: Verify Day 1, Day 2, Day 3, and Day 5 endpoints continue operating."""
+    """Scenario 12: Verify Day 1, Day 2, Day 3, and Day 5 endpoints continue operating."""
     headers_citizen = setup_day4_data["headers"]["citizen"]
 
     # Day 1

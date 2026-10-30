@@ -44,13 +44,13 @@ class DbHealthResponse(BaseModel):
 class UserRegisterRequest(BaseModel):
     """
     Schema for user registration.
-    Authorized Lab Authority signup requires an administrative invitation token.
+    Authorized Laboratory Authority signup.
     Public registration can NEVER supply or override a role; role is assigned securely by the backend.
     """
     name: str = Field(..., min_length=2, max_length=100, description="User's full name")
     email: EmailStr = Field(..., description="Valid unique email address")
     password: str = Field(..., min_length=6, max_length=128, description="Password (at least 6 characters)")
-    invitation_token: Optional[str] = Field(None, description="Administrative signup invitation token")
+    invitation_token: Optional[str] = Field(None, description="Optional legacy invitation token (deprecated)")
 
     model_config = ConfigDict(extra="ignore")
 
@@ -120,6 +120,8 @@ class WaterBodyBase(BaseModel):
     name: str = Field(..., min_length=2, max_length=100, description="Water body name (e.g. Ganges, Dal Lake)")
     water_body_type: str = Field(..., min_length=2, max_length=50, description="Type: river, lake, reservoir, canal")
     location_name: str = Field(..., min_length=2, max_length=200, description="Location description or region")
+    district: Optional[str] = Field(None, max_length=100, description="District name (e.g. Kolhapur, Sangli, Pune)")
+    state: Optional[str] = Field(default="Maharashtra", max_length=100, description="State (default Maharashtra)")
     latitude: Optional[float] = Field(None, ge=-90.0, le=90.0, description="Geographic latitude (-90 to 90)")
     longitude: Optional[float] = Field(None, ge=-180.0, le=180.0, description="Geographic longitude (-180 to 180)")
 
@@ -134,6 +136,8 @@ class WaterBodyUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100)
     water_body_type: Optional[str] = Field(None, min_length=2, max_length=50)
     location_name: Optional[str] = Field(None, min_length=2, max_length=200)
+    district: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
     latitude: Optional[float] = Field(None, ge=-90.0, le=90.0)
     longitude: Optional[float] = Field(None, ge=-180.0, le=180.0)
 
@@ -171,6 +175,18 @@ class WaterQualityRecordBase(BaseModel):
     electrical_conductivity: Optional[float] = Field(None, ge=0.0, description="Electrical Conductivity (µS/cm)")
     nitrate: Optional[float] = Field(None, ge=0.0, description="Nitrate concentration (mg/L)")
     temperature: Optional[float] = Field(None, ge=-20.0, le=100.0, description="Water temperature in °C")
+    cod: Optional[float] = Field(None, ge=0.0, description="Chemical Oxygen Demand (mg/L)")
+    ammonia_n: Optional[float] = Field(None, ge=0.0, description="Ammonia Nitrogen (mg/L)")
+    chlorides: Optional[float] = Field(None, ge=0.0, description="Chlorides (mg/L)")
+    sulphate: Optional[float] = Field(None, ge=0.0, description="Sulphate (mg/L)")
+    fecal_coliform: Optional[float] = Field(None, ge=0.0, description="Fecal Coliform (MPN/100mL)")
+    total_coliform: Optional[float] = Field(None, ge=0.0, description="Total Coliform (MPN/100mL)")
+    sample_name: Optional[str] = Field(None, max_length=100, description="Sample label or identifier")
+    wqi_score: Optional[float] = Field(None, description="Predicted numerical WQI score")
+    wqi_prediction: Optional[str] = Field(None, description="Predicted WQI classification or score string")
+    wqi_status: Optional[str] = Field(None, description="ML inference execution status")
+    wqi_algorithm: Optional[str] = Field(None, description="Model algorithm used")
+    safety_classification: Optional[str] = Field(None, description="Rule-based screening: SAFE, HARMFUL, or INCONCLUSIVE")
     measured_at: datetime = Field(..., description="Timestamp of sampling/measurement")
 
 
@@ -190,6 +206,18 @@ class WaterQualityRecordUpdate(BaseModel):
     electrical_conductivity: Optional[float] = Field(None, ge=0.0)
     nitrate: Optional[float] = Field(None, ge=0.0)
     temperature: Optional[float] = Field(None, ge=-20.0, le=100.0)
+    cod: Optional[float] = Field(None, ge=0.0)
+    ammonia_n: Optional[float] = Field(None, ge=0.0)
+    chlorides: Optional[float] = Field(None, ge=0.0)
+    sulphate: Optional[float] = Field(None, ge=0.0)
+    fecal_coliform: Optional[float] = Field(None, ge=0.0)
+    total_coliform: Optional[float] = Field(None, ge=0.0)
+    sample_name: Optional[str] = Field(None, max_length=100)
+    wqi_score: Optional[float] = None
+    wqi_prediction: Optional[str] = None
+    wqi_status: Optional[str] = None
+    wqi_algorithm: Optional[str] = None
+    safety_classification: Optional[str] = None
     measured_at: Optional[datetime] = None
 
 
@@ -197,6 +225,11 @@ class WaterQualityRecordResponse(WaterQualityRecordBase):
     """Response schema for returning water quality measurement details."""
     id: int
     water_body_id: int
+    location_id: Optional[str] = None
+    water_body_name: Optional[str] = None
+    location_name: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -216,6 +249,13 @@ class MeasurementSnapshot(BaseModel):
     electrical_conductivity: Optional[float] = Field(None, description="Electrical Conductivity (µS/cm)")
     nitrate: Optional[float] = Field(None, description="Nitrate (mg/L)")
     temperature: Optional[float] = Field(None, description="Temperature (°C)")
+    cod: Optional[float] = Field(None, description="COD (mg/L)")
+    ammonia_n: Optional[float] = Field(None, description="Ammonia Nitrogen (mg/L)")
+    chlorides: Optional[float] = Field(None, description="Chlorides (mg/L)")
+    sulphate: Optional[float] = Field(None, description="Sulphate (mg/L)")
+    fecal_coliform: Optional[float] = Field(None, description="Fecal Coliform (MPN/100mL)")
+    total_coliform: Optional[float] = Field(None, description="Total Coliform (MPN/100mL)")
+    wqi_score: Optional[float] = Field(None, description="Calculated WQI Score")
 
 
 class GISLocationMarker(BaseModel):
@@ -228,10 +268,14 @@ class GISLocationMarker(BaseModel):
     name: str
     water_body_type: str
     location_name: str
+    district: Optional[str] = None
+    state: Optional[str] = None
     latitude: float
     longitude: float
     latest_measured_at: Optional[datetime] = None
     latest_measurements: Optional[MeasurementSnapshot] = None
+    latest_wqi_score: Optional[float] = None
+    latest_safety_classification: Optional[str] = None
     water_quality_status: str = Field("UNKNOWN", description="Current status indicator: UNKNOWN (pending standards)")
     status_reason: str = Field(..., description="Explanation of water quality status")
     is_demo: bool = Field(False, description="Whether this is an illustrative demonstration location")
@@ -246,11 +290,15 @@ class GISLocationDetail(BaseModel):
     name: str
     water_body_type: str
     location_name: str
+    district: Optional[str] = None
+    state: Optional[str] = None
     latitude: Optional[float]
     longitude: Optional[float]
     created_at: Optional[datetime] = None
     latest_measured_at: Optional[datetime] = None
     latest_measurements: Optional[MeasurementSnapshot] = None
+    latest_wqi_score: Optional[float] = None
+    latest_safety_classification: Optional[str] = None
     water_quality_status: str
     status_reason: str
     is_demo: bool = Field(False, description="Whether this is an illustrative demonstration location")
@@ -271,6 +319,16 @@ class LocationHistoryItem(BaseModel):
     electrical_conductivity: Optional[float] = None
     nitrate: Optional[float] = None
     temperature: Optional[float] = None
+    cod: Optional[float] = None
+    ammonia_n: Optional[float] = None
+    chlorides: Optional[float] = None
+    sulphate: Optional[float] = None
+    fecal_coliform: Optional[float] = None
+    total_coliform: Optional[float] = None
+    sample_name: Optional[str] = None
+    wqi_score: Optional[float] = None
+    wqi_status: Optional[str] = None
+    safety_classification: Optional[str] = None
     is_demo: bool = False
 
 
@@ -281,8 +339,13 @@ class LocationHistoryResponse(BaseModel):
     name: str
     water_body_type: str
     location_name: str
+    district: Optional[str] = None
+    state: Optional[str] = None
     latitude: float
     longitude: float
+    latest_wqi_score: Optional[float] = None
+    latest_wqi_status: Optional[str] = None
+    latest_safety_classification: Optional[str] = None
     is_demo: bool = False
     total_records: int
     records: List[LocationHistoryItem] = Field(default_factory=list)
@@ -393,9 +456,15 @@ class PredictionResponse(BaseModel):
     """
     status: str = Field(..., description="Inference status: SUCCESS or MOCK")
     prediction: str = Field(..., description="Predicted water quality classification / pollution risk category")
+    wqi_score: Optional[float] = Field(None, description="Exact numerical WQI score produced by the regression model")
+    algorithm: Optional[str] = Field("Decision Tree Regressor", description="Machine learning algorithm name")
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Prediction confidence score or probability (0.0 to 1.0)")
     model_version: Optional[str] = Field(None, description="Identifier of the model artifact or endpoint")
     features_used: Dict[str, Optional[float]] = Field(..., description="Copy of input features passed to the model")
+    disclaimer: str = Field(
+        "WQI is a statistical index calculated by a DecisionTreeRegressor model based on physical, chemical, and biological inputs. It does NOT constitute medical or certified drinking-water safety approval.",
+        description="Scientific interpretation disclaimer",
+    )
 
 
 # ==========================================================
@@ -431,8 +500,16 @@ class WaterQualityTestRequest(BaseModel):
     electrical_conductivity: Optional[float] = Field(None, description="Electrical Conductivity in µS/cm")
     nitrate: Optional[float] = Field(None, description="Nitrate in mg/L")
     temperature: Optional[float] = Field(None, description="Water temperature in °C")
-    save_to_db: bool = Field(default=False, description="Explicit action flag: persist this record to PostgreSQL")
-    water_body_id: Optional[int] = Field(default=None, description="Target water body ID if explicit persistence is requested")
+    cod: Optional[float] = Field(None, ge=0.0, description="Chemical Oxygen Demand in mg/L")
+    ammonia_n: Optional[float] = Field(None, ge=0.0, description="Ammonia Nitrogen in mg/L")
+    chlorides: Optional[float] = Field(None, ge=0.0, description="Chlorides in mg/L")
+    sulphate: Optional[float] = Field(None, ge=0.0, description="Sulphate in mg/L")
+    fecal_coliform: Optional[float] = Field(None, ge=0.0, description="Fecal Coliform in MPN/100mL")
+    total_coliform: Optional[float] = Field(None, ge=0.0, description="Total Coliform in MPN/100mL")
+    location_id: Optional[int] = Field(default=None, description="Database ID of the monitored location")
+    water_body_id: Optional[int] = Field(default=None, description="Target water body ID (synonym for location_id)")
+    sampled_at: Optional[datetime] = Field(default=None, description="Timestamp when sample was collected")
+    save_to_db: bool = Field(default=True, description="Persist this record to PostgreSQL database")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -447,6 +524,12 @@ class WaterQualityTestRequest(BaseModel):
                 "electrical_conductivity": 320.0,
                 "nitrate": 1.2,
                 "temperature": 22.0,
+                "cod": 10.0,
+                "ammonia_n": 0.2,
+                "chlorides": 25.0,
+                "sulphate": 30.0,
+                "fecal_coliform": 20.0,
+                "total_coliform": 50.0,
                 "save_to_db": False,
             }
         }
@@ -473,10 +556,32 @@ class WaterQualityTestResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list, description="Boundary or caution warnings")
     limitations: str = Field(..., description="Scientific limitations of this 5-parameter screening")
     evaluated_at: datetime = Field(..., description="Server timestamp of evaluation")
+    sampled_at: Optional[datetime] = Field(default=None, description="Sample collection timestamp")
     persisted_to_database: bool = Field(default=False, description="Whether this sample was saved into PostgreSQL")
     persisted_record_id: Optional[int] = Field(default=None, description="PostgreSQL record ID if saved")
+    location_id: Optional[str] = Field(default=None, description="Monitored location ID")
+    water_body_id: Optional[int] = Field(default=None, description="Monitored water body ID")
+    location_name: Optional[str] = Field(default=None, description="Geographical location description")
+    water_body_name: Optional[str] = Field(default=None, description="Name of the water body")
+    district: Optional[str] = Field(default=None, description="District name")
+    state: Optional[str] = Field(default=None, description="State name")
     ml_model_status: str = Field(default="UNAVAILABLE", description="Status of ML model deployment")
     ml_model_details: str = Field(..., description="Explanation regarding ML model integration")
+    ml_prediction: Optional[PredictionResponse] = Field(None, description="Trained ML model WQI prediction output when all 12 features are supplied")
+    wqi_score: Optional[float] = Field(default=None, description="Predicted numerical WQI score")
     message: str = Field(..., description="Human-readable server summary")
 
 
+
+
+class PlaceSearchResult(BaseModel):
+    """
+    Search result for geocoded location within Maharashtra.
+    """
+    place_id: Union[str, int]
+    name: str
+    display_name: str
+    lat: float
+    lon: float
+    type: Optional[str] = "location"
+    is_maharashtra: bool = True

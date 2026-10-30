@@ -14,6 +14,9 @@ import {
   Check,
   Scale,
   AlertOctagon,
+  Cpu,
+  Sparkles,
+  Activity,
 } from 'lucide-react'
 import { testWaterQualityApi, getWaterBodiesApi } from '../services/api'
 import { DUMMY_SAMPLES, INCOMPLETE_SAMPLE } from '../data/dummySamples'
@@ -26,16 +29,36 @@ export default function TestWater() {
   const [sampleName, setSampleName] = useState(DUMMY_SAMPLES[0].name)
   const [isDemo, setIsDemo] = useState(true)
 
-  // Form measurement inputs initialized with Sample A values
-  const [ph, setPh] = useState(DUMMY_SAMPLES[0].values.ph.toString())
+  // Core baseline measurement inputs (CPCB / IS 10500 baseline)
+  const [ph, setPh] = useState(DUMMY_SAMPLES[0].values.ph?.toString() || '7.2')
   const [dissolvedOxygen, setDissolvedOxygen] = useState(
-    DUMMY_SAMPLES[0].values.dissolved_oxygen.toString()
+    DUMMY_SAMPLES[0].values.dissolved_oxygen?.toString() || '7.0'
   )
-  const [bod, setBod] = useState(DUMMY_SAMPLES[0].values.bod.toString())
+  const [bod, setBod] = useState(DUMMY_SAMPLES[0].values.bod?.toString() || '2.0')
   const [turbidity, setTurbidity] = useState(
-    DUMMY_SAMPLES[0].values.turbidity.toString()
+    DUMMY_SAMPLES[0].values.turbidity?.toString() || '3.0'
   )
-  const [tds, setTds] = useState(DUMMY_SAMPLES[0].values.tds.toString())
+  const [tds, setTds] = useState(DUMMY_SAMPLES[0].values.tds?.toString() || '250')
+
+  // Additional 6 parameters required by the trained ML Decision Tree WQI Model
+  const [cod, setCod] = useState(DUMMY_SAMPLES[0].values.cod?.toString() || '10.0')
+  const [ammoniaN, setAmmoniaN] = useState(
+    DUMMY_SAMPLES[0].values.ammonia_n?.toString() || '0.2'
+  )
+  const [chlorides, setChlorides] = useState(
+    DUMMY_SAMPLES[0].values.chlorides?.toString() || '25.0'
+  )
+  const [sulphate, setSulphate] = useState(
+    DUMMY_SAMPLES[0].values.sulphate?.toString() || '30.0'
+  )
+  const [fecalColiform, setFecalColiform] = useState(
+    DUMMY_SAMPLES[0].values.fecal_coliform?.toString() || '20.0'
+  )
+  const [totalColiform, setTotalColiform] = useState(
+    DUMMY_SAMPLES[0].values.total_coliform?.toString() || '50.0'
+  )
+
+  // Optional secondary physical parameters
   const [electricalConductivity, setElectricalConductivity] = useState(
     DUMMY_SAMPLES[0].values.electrical_conductivity?.toString() || '320'
   )
@@ -82,6 +105,7 @@ export default function TestWater() {
     setActiveSampleId(sample.id)
     setSampleName(sample.name)
     setIsDemo(true)
+
     setPh(sample.values.ph !== null && sample.values.ph !== undefined ? sample.values.ph.toString() : '')
     setDissolvedOxygen(
       sample.values.dissolved_oxygen !== null && sample.values.dissolved_oxygen !== undefined
@@ -95,6 +119,36 @@ export default function TestWater() {
         : ''
     )
     setTds(sample.values.tds !== null && sample.values.tds !== undefined ? sample.values.tds.toString() : '')
+
+    // ML Features
+    setCod(sample.values.cod !== null && sample.values.cod !== undefined ? sample.values.cod.toString() : '')
+    setAmmoniaN(
+      sample.values.ammonia_n !== null && sample.values.ammonia_n !== undefined
+        ? sample.values.ammonia_n.toString()
+        : ''
+    )
+    setChlorides(
+      sample.values.chlorides !== null && sample.values.chlorides !== undefined
+        ? sample.values.chlorides.toString()
+        : ''
+    )
+    setSulphate(
+      sample.values.sulphate !== null && sample.values.sulphate !== undefined
+        ? sample.values.sulphate.toString()
+        : ''
+    )
+    setFecalColiform(
+      sample.values.fecal_coliform !== null && sample.values.fecal_coliform !== undefined
+        ? sample.values.fecal_coliform.toString()
+        : ''
+    )
+    setTotalColiform(
+      sample.values.total_coliform !== null && sample.values.total_coliform !== undefined
+        ? sample.values.total_coliform.toString()
+        : ''
+    )
+
+    // Secondary
     setElectricalConductivity(
       sample.values.electrical_conductivity ? sample.values.electrical_conductivity.toString() : ''
     )
@@ -117,6 +171,12 @@ export default function TestWater() {
     setBod('')
     setTurbidity('')
     setTds('')
+    setCod('')
+    setAmmoniaN('')
+    setChlorides('')
+    setSulphate('')
+    setFecalColiform('')
+    setTotalColiform('')
     setElectricalConductivity('')
     setNitrate('')
     setTemperature('')
@@ -141,6 +201,16 @@ export default function TestWater() {
     const parsedBod = bod !== '' && !isNaN(parseFloat(bod)) ? parseFloat(bod) : null
     const parsedTurbidity = turbidity !== '' && !isNaN(parseFloat(turbidity)) ? parseFloat(turbidity) : null
     const parsedTds = tds !== '' && !isNaN(parseFloat(tds)) ? parseFloat(tds) : null
+
+    // ML Features
+    const parsedCod = cod !== '' && !isNaN(parseFloat(cod)) ? parseFloat(cod) : null
+    const parsedAmmonia = ammoniaN !== '' && !isNaN(parseFloat(ammoniaN)) ? parseFloat(ammoniaN) : null
+    const parsedChlorides = chlorides !== '' && !isNaN(parseFloat(chlorides)) ? parseFloat(chlorides) : null
+    const parsedSulphate = sulphate !== '' && !isNaN(parseFloat(sulphate)) ? parseFloat(sulphate) : null
+    const parsedFecal = fecalColiform !== '' && !isNaN(parseFloat(fecalColiform)) ? parseFloat(fecalColiform) : null
+    const parsedTotal = totalColiform !== '' && !isNaN(parseFloat(totalColiform)) ? parseFloat(totalColiform) : null
+
+    // Secondary
     const parsedEc = electricalConductivity !== '' && !isNaN(parseFloat(electricalConductivity)) ? parseFloat(electricalConductivity) : null
     const parsedNitrate = nitrate !== '' && !isNaN(parseFloat(nitrate)) ? parseFloat(nitrate) : null
     const parsedTemp = temperature !== '' && !isNaN(parseFloat(temperature)) ? parseFloat(temperature) : null
@@ -158,6 +228,12 @@ export default function TestWater() {
       bod: parsedBod,
       turbidity: parsedTurbidity,
       tds: parsedTds,
+      cod: parsedCod,
+      ammonia_n: parsedAmmonia,
+      chlorides: parsedChlorides,
+      sulphate: parsedSulphate,
+      fecal_coliform: parsedFecal,
+      total_coliform: parsedTotal,
       electrical_conductivity: parsedEc,
       nitrate: parsedNitrate,
       temperature: parsedTemp,
@@ -167,11 +243,9 @@ export default function TestWater() {
 
     setSubmitting(true)
     try {
-      // Send real network request to backend POST /water-quality/test
       const result = await testWaterQualityApi(payload)
       setBackendResponse(result)
     } catch (err) {
-      // Surface real backend/network error without fabricating results
       setBackendError(err.message || 'Failed to communicate with FastAPI backend server.')
     } finally {
       setSubmitting(false)
@@ -188,15 +262,15 @@ export default function TestWater() {
               LAB_AUTHORITY ACCESS
             </span>
             <span className="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
-              SAFETY CLASSIFICATION (DEMO)
+              SAFETY CLASSIFICATION + ML WQI
             </span>
           </div>
           <h1 className="mt-2 text-2xl font-black text-slate-900 sm:text-3xl flex items-center gap-2.5">
             <FlaskConical className="h-7 w-7 text-blue-600" />
-            <span>Water Quality Testing & Safety Classification</span>
+            <span>Water Quality Testing & ML WQI Analysis</span>
           </h1>
           <p className="mt-1 text-sm text-slate-600">
-            Submit water quality test measurements to the FastAPI backend for rule-based safety evaluation (<strong>SAFE</strong>, <strong>HARMFUL</strong>, or <strong>INCONCLUSIVE</strong>).
+            Submit water quality test measurements for standard rule-based safety screening (<strong>SAFE</strong>, <strong>HARMFUL</strong>, or <strong>INCONCLUSIVE</strong>) and trained <strong>DecisionTreeRegressor</strong> Water Quality Index (WQI) scoring.
           </p>
         </div>
 
@@ -205,10 +279,10 @@ export default function TestWater() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
             <div>
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700">
-                1. Select Predefined Dummy Test Sample
+                1. Select Predefined Test Sample
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Click any sample below to load its exact measurements into the testing form.
+                Click any sample below to load its full 12-feature measurements into the testing form.
               </p>
             </div>
             {activeSampleId && (
@@ -266,9 +340,13 @@ export default function TestWater() {
                       <span className="text-[10px] text-slate-400 block font-medium">Turbidity</span>
                       <strong className="text-slate-800">{sample.values.turbidity}</strong>
                     </div>
-                    <div className="mt-1 col-span-2">
+                    <div className="mt-1">
+                      <span className="text-[10px] text-slate-400 block font-medium">COD</span>
+                      <strong className="text-slate-800">{sample.values.cod}</strong>
+                    </div>
+                    <div className="mt-1">
                       <span className="text-[10px] text-slate-400 block font-medium">TDS</span>
-                      <strong className="text-slate-800">{sample.values.tds} mg/L</strong>
+                      <strong className="text-slate-800">{sample.values.tds}</strong>
                     </div>
                   </div>
 
@@ -430,6 +508,131 @@ export default function TestWater() {
                     placeholder="e.g. 250"
                   />
                   <span className="text-[10px] text-slate-400 mt-0.5 block">Total Dissolved</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Advanced ML Model Parameters */}
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-4 w-4 text-indigo-600" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-900">
+                    Advanced Model Features (Required for Machine Learning WQI)
+                  </h3>
+                </div>
+                <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
+                  DecisionTreeRegressor (12 Features)
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {/* COD */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">
+                    COD (Chemical Oxygen Demand, mg/L)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={cod}
+                    onChange={(e) => {
+                      setCod(e.target.value)
+                      setActiveSampleId(null)
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="e.g. 10.0"
+                  />
+                </div>
+
+                {/* Ammonia Nitrogen */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">
+                    Ammonia Nitrogen (mg/L)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={ammoniaN}
+                    onChange={(e) => {
+                      setAmmoniaN(e.target.value)
+                      setActiveSampleId(null)
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="e.g. 0.2"
+                  />
+                </div>
+
+                {/* Chlorides */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">
+                    Chlorides (mg/L)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={chlorides}
+                    onChange={(e) => {
+                      setChlorides(e.target.value)
+                      setActiveSampleId(null)
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="e.g. 25.0"
+                  />
+                </div>
+
+                {/* Sulphate */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">
+                    Sulphate (mg/L)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={sulphate}
+                    onChange={(e) => {
+                      setSulphate(e.target.value)
+                      setActiveSampleId(null)
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="e.g. 30.0"
+                  />
+                </div>
+
+                {/* Fecal Coliform */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">
+                    Fecal Coliform (MPN/100mL)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={fecalColiform}
+                    onChange={(e) => {
+                      setFecalColiform(e.target.value)
+                      setActiveSampleId(null)
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="e.g. 20.0"
+                  />
+                </div>
+
+                {/* Total Coliform */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">
+                    Total Coliform (MPN/100mL)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={totalColiform}
+                    onChange={(e) => {
+                      setTotalColiform(e.target.value)
+                      setActiveSampleId(null)
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="e.g. 50.0"
+                  />
                 </div>
               </div>
             </div>
@@ -682,6 +885,68 @@ export default function TestWater() {
               )}
             </div>
 
+            {/* Dedicated Machine Learning WQI Prediction Card */}
+            {backendResponse.ml_prediction ? (
+              <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/90 via-purple-50/50 to-white p-6 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-1 rounded-xl bg-indigo-600 p-2.5 text-white shadow-xs">
+                      <Cpu className="h-7 w-7" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-indigo-700">
+                          MACHINE LEARNING PREDICTION
+                        </span>
+                        <span className="text-[10px] font-bold uppercase rounded px-2 py-0.5 bg-indigo-100 text-indigo-800 border border-indigo-300">
+                          {backendResponse.ml_prediction.algorithm || 'Decision Tree Regressor'}
+                        </span>
+                        <span className="text-[10px] font-bold uppercase rounded px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          ACTIVE MODEL
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-baseline gap-3">
+                        <span className="text-3xl font-black text-indigo-950">
+                          {backendResponse.ml_prediction.wqi_score !== null && backendResponse.ml_prediction.wqi_score !== undefined
+                            ? backendResponse.ml_prediction.wqi_score.toFixed(2)
+                            : backendResponse.ml_prediction.prediction}
+                        </span>
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Water Quality Index (WQI)
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600 max-w-xl">
+                        Calculated from all 12 chemical, physical, and biological parameters using the trained 
+                        scikit-learn Decision Tree model (<code>{backendResponse.ml_prediction.model_version}</code>).
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="sm:text-right text-xs text-slate-500 border-t sm:border-t-0 pt-2 sm:pt-0 border-indigo-100 space-y-1">
+                    <div className="inline-block rounded-lg bg-indigo-100/80 px-3 py-1.5 text-indigo-900 font-semibold">
+                      Artifact: AquaWatchAI_Best_Model.joblib
+                    </div>
+                    <p className="text-[11px] text-slate-500">12 Features Processed</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-indigo-100/80 flex items-start gap-2.5 text-xs text-slate-600">
+                  <Info className="h-4 w-4 shrink-0 text-indigo-500 mt-0.5" />
+                  <p className="text-[11px] leading-relaxed text-slate-600">
+                    <strong className="text-slate-800">Scientific Distinction:</strong> {backendResponse.ml_prediction.disclaimer}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600 flex items-start gap-3">
+                <Info className="h-5 w-5 shrink-0 text-slate-400 mt-0.5" />
+                <div>
+                  <p className="font-bold text-slate-700">Machine Learning Status: {backendResponse.ml_model_status}</p>
+                  <p className="text-slate-500 mt-0.5">{backendResponse.ml_model_details}</p>
+                </div>
+              </div>
+            )}
+
             {/* Parameter-by-Parameter Assessment Table */}
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs space-y-3">
               <div className="flex items-center justify-between">
@@ -741,7 +1006,7 @@ export default function TestWater() {
               </div>
             </div>
 
-            {/* Scientific Limitations & Regulatory Disclaimer (Requirement 6) */}
+            {/* Scientific Limitations & Regulatory Disclaimer */}
             <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4 text-xs text-blue-900 flex items-start gap-3">
               <Info className="h-5 w-5 shrink-0 mt-0.5 text-blue-600" />
               <div className="space-y-1">

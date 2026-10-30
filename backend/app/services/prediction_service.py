@@ -58,6 +58,8 @@ class PredictionService:
     """
 
     def __init__(self):
+        self._model_cache = None
+        self._cached_path = None
         self._refresh_config()
 
     def _refresh_config(self):
@@ -70,6 +72,21 @@ class PredictionService:
         except ValueError:
             self.timeout = 5.0
         self.mock_mode = os.getenv("ML_MOCK_MODE", "false").strip().lower() in ("true", "1", "yes")
+
+    def _resolve_model_path(self) -> str:
+        """Finds the model artifact path relative to current working directory or backend root."""
+        candidates = [
+            self.model_path,
+            os.path.join(os.path.dirname(__file__), "..", "..", self.model_path),
+            os.path.join(os.path.dirname(__file__), "..", "..", "models", "AquaWatchAI_Best_Model.joblib"),
+            os.path.join(os.getcwd(), self.model_path),
+            os.path.join(os.getcwd(), "backend", self.model_path),
+            os.path.join(os.getcwd(), "backend", "models", "AquaWatchAI_Best_Model.joblib"),
+        ]
+        for p in candidates:
+            if p and os.path.exists(p):
+                return os.path.abspath(p)
+        return self.model_path
 
     async def predict(self, input_data: PredictionInput) -> PredictionResponse:
         """
@@ -106,7 +123,6 @@ class PredictionService:
         """
         Generates a clearly labeled mock prediction for testing purposes only.
         """
-        # Determine a mock status for testing verification based on pH and DO
         ph = features.get("ph", 7.0)
         do = features.get("dissolved_oxygen", 6.0)
         is_favorable = (6.5 <= ph <= 8.5) and (do >= 5.0)
@@ -117,23 +133,32 @@ class PredictionService:
         return PredictionResponse(
             status="MOCK",
             prediction=prediction_label,
+            wqi_score=45.0 if is_favorable else 85.0,
+            algorithm="Mock Predictor",
             confidence=confidence,
             model_version="mock-test-v1.0",
             features_used=features,
+            disclaimer="Mock prediction strictly for testing.",
         )
 
-    
     async def _execute_local_model(self, features: Dict[str, Any]) -> PredictionResponse:
         """Load the saved model artifact and predict WQI using all 12 features."""
-        if not os.path.exists(self.model_path):
+        resolved_path = self._resolve_model_path()
+        if not os.path.exists(resolved_path):
             raise MLServiceUnavailableException(
-                f"Model file not found: {self.model_path}"
+                f"Model file not found at '{self.model_path}' (resolved: '{resolved_path}')"
             )
 
         try:
             import joblib
+            import pandas as pd
 
-            artifact = joblib.load(self.model_path)
+            if self._model_cache is None or self._cached_path != resolved_path:
+                artifact = joblib.load(resolved_path)
+                self._model_cache = artifact
+                self._cached_path = resolved_path
+            else:
+                artifact = self._model_cache
 
             if not isinstance(artifact, dict) or "model" not in artifact:
                 raise ValueError(
@@ -176,30 +201,38 @@ class PredictionService:
                     "Missing required model measurements: " + ", ".join(missing)
                 )
 
-            feature_vector = [
-                float(features[feature_mapping[name]])
+            # Construct DataFrame with exact feature names to eliminate scikit-learn warnings
+            row_dict = {
+                name: float(features[feature_mapping[name]])
                 for name in model_features
-            ]
+            }
+            df = pd.DataFrame([row_dict], columns=model_features)
 
-            raw_pred = model.predict([feature_vector])
-            wqi_score = float(raw_pred[0])
+            raw_pred = model.predict(df)
+            wqi_score = round(float(raw_pred[0]), 2)
+            algo_name = artifact.get("algorithm", "Decision Tree Regressor")
 
             return PredictionResponse(
                 status="SUCCESS",
-                prediction=str(wqi_score),
+                prediction=f"{wqi_score:.2f}",
+                wqi_score=wqi_score,
+                algorithm=algo_name,
                 confidence=None,
-                model_version=f"local-{os.path.basename(self.model_path)}",
+                model_version=f"local-{os.path.basename(resolved_path)}",
                 features_used={
                     feature_mapping[name]: float(features[feature_mapping[name]])
                     for name in model_features
                 },
+                disclaimer=(
+                    "WQI is a statistical index calculated by a DecisionTreeRegressor model based on physical, "
+                    "chemical, and biological inputs. It does NOT constitute medical or certified drinking-water safety approval."
+                ),
             )
 
         except Exception as e:
             raise MLServiceIntegrationException(
                 f"Local model prediction failed: {str(e)}"
             )
-
 
     async def _execute_remote_api(self, features: Dict[str, Any]) -> PredictionResponse:
         """
@@ -227,22 +260,33 @@ class PredictionService:
 
         try:
             data = response.json()
-            # Standard expected format from external service:
-            # {"prediction": "...", "confidence": 0.85, "model_version": "..."}
             prediction = data.get("prediction")
             if not prediction:
                 raise ValueError("Response missing required 'prediction' key.")
 
+            wqi_score = data.get("wqi_score")
+            if wqi_score is None:
+                try:
+                    wqi_score = float(prediction)
+                except (ValueError, TypeError):
+                    wqi_score = None
+
             return PredictionResponse(
                 status="SUCCESS",
                 prediction=str(prediction),
+                wqi_score=wqi_score,
+                algorithm=data.get("algorithm", "Remote ML Service"),
                 confidence=data.get("confidence"),
                 model_version=data.get("model_version", "remote-api"),
                 features_used=features,
+                disclaimer=data.get(
+                    "disclaimer",
+                    "WQI is a statistical index calculated based on physical, chemical, and biological inputs. It does NOT constitute medical or certified drinking-water safety approval."
+                ),
             )
         except Exception as e:
             raise MLServiceIntegrationException(
-                "Failed to parse ML microservice response: {str(e)}"
+                f"Failed to parse ML microservice response: {str(e)}"
             )
 
 

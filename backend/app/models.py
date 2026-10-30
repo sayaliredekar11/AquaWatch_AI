@@ -81,6 +81,8 @@ class WaterBody(Base):
     name = Column(String(100), nullable=False, index=True)
     water_body_type = Column(String(50), nullable=False)  # e.g., 'river', 'lake', 'reservoir'
     location_name = Column(String(200), nullable=False)   # e.g., 'Ganga River Basin - Haridwar'
+    district = Column(String(100), nullable=True)         # e.g., 'Kolhapur', 'Sangli', 'Pune'
+    state = Column(String(100), nullable=True, default="Maharashtra", server_default="Maharashtra")
     latitude = Column(Float, nullable=True)               # -90.0 to 90.0
     longitude = Column(Float, nullable=True)              # -180.0 to 180.0
     created_at = Column(
@@ -138,6 +140,18 @@ class WaterQualityRecord(Base):
     electrical_conductivity = Column(Float, nullable=True)
     nitrate = Column(Float, nullable=True)
     temperature = Column(Float, nullable=True)
+    cod = Column(Float, nullable=True)
+    ammonia_n = Column(Float, nullable=True)
+    chlorides = Column(Float, nullable=True)
+    sulphate = Column(Float, nullable=True)
+    fecal_coliform = Column(Float, nullable=True)
+    total_coliform = Column(Float, nullable=True)
+    sample_name = Column(String(100), nullable=True)
+    wqi_score = Column(Float, nullable=True)
+    wqi_prediction = Column(String(50), nullable=True)
+    wqi_status = Column(String(50), nullable=True)
+    wqi_algorithm = Column(String(100), nullable=True)
+    safety_classification = Column(String(50), nullable=True)
     measured_at = Column(DateTime(timezone=True), nullable=False, index=True)
     created_at = Column(
         DateTime(timezone=True),

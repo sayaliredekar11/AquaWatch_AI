@@ -10,12 +10,15 @@ Endpoints:
 """
 
 from datetime import datetime
+import json
+import urllib.request
+import urllib.parse
 from typing import List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.schemas import GISLocationDetail, GISLocationMarker, LocationHistoryResponse
+from app.schemas import GISLocationDetail, GISLocationMarker, LocationHistoryResponse, PlaceSearchResult
 from app.services.gis_service import (
     get_location_detail,
     get_location_history_service,
@@ -167,3 +170,229 @@ def get_map_location_history(
         )
 
     return history
+
+
+# ==========================================================
+# 4. Search Places in Maharashtra (Geocoding Proxy & Cache)
+# ==========================================================
+
+_SEARCH_CACHE: dict = {}
+
+MAHARASHTRA_FALLBACK_PLACES = [
+    {
+        "place_id": "fallback_sangli",
+        "name": "Sangli",
+        "display_name": "Sangli, Miraj, Sangli District, Maharashtra, 416416, India",
+        "lat": 16.8502534,
+        "lon": 74.5948885,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_pune",
+        "name": "Pune",
+        "display_name": "Pune, Pune City Subdistrict, Pune District, Maharashtra, 411001, India",
+        "lat": 18.5213738,
+        "lon": 73.8545071,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_nashik",
+        "name": "Nashik",
+        "display_name": "Nashik, Nashik Subdistrict, Nashik District, Maharashtra, 422001, India",
+        "lat": 20.0112475,
+        "lon": 73.7902364,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_kolhapur",
+        "name": "Kolhapur",
+        "display_name": "Kolhapur, Karvir, Kolhapur District, Maharashtra, 416003, India",
+        "lat": 16.7028412,
+        "lon": 74.2405329,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_godavari",
+        "name": "Godavari River",
+        "display_name": "Godavari River, Trimbak, Nashik District, Maharashtra, India",
+        "lat": 19.9253576,
+        "lon": 73.5265365,
+        "type": "river",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_krishna",
+        "name": "Krishna River",
+        "display_name": "Krishna River, Sangli Basin, Maharashtra, India",
+        "lat": 16.8524,
+        "lon": 74.5815,
+        "type": "river",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_panchganga",
+        "name": "Panchganga River",
+        "display_name": "Panchganga River, Shiroli Basin, Kolhapur District, Maharashtra, India",
+        "lat": 16.7128,
+        "lon": 74.2384,
+        "type": "river",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_mula_mutha",
+        "name": "Mula-Mutha River",
+        "display_name": "Mula-Mutha River, Bund Garden, Pune, Maharashtra, India",
+        "lat": 18.5204,
+        "lon": 73.8567,
+        "type": "river",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_venna",
+        "name": "Venna Lake",
+        "display_name": "Venna Lake, Mahabaleshwar, Satara District, Maharashtra, India",
+        "lat": 17.9237,
+        "lon": 73.6586,
+        "type": "lake",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_mumbai",
+        "name": "Mumbai",
+        "display_name": "Mumbai, Mumbai Suburban, Maharashtra, India",
+        "lat": 19.0760,
+        "lon": 72.8777,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_nagpur",
+        "name": "Nagpur",
+        "display_name": "Nagpur, Nagpur District, Maharashtra, India",
+        "lat": 21.1458,
+        "lon": 79.0882,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_satara",
+        "name": "Satara",
+        "display_name": "Satara, Satara District, Maharashtra, India",
+        "lat": 17.6805,
+        "lon": 73.9997,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_aurangabad",
+        "name": "Chhatrapati Sambhajinagar",
+        "display_name": "Chhatrapati Sambhajinagar (Aurangabad), Maharashtra, India",
+        "lat": 19.8762,
+        "lon": 75.3433,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_solapur",
+        "name": "Solapur",
+        "display_name": "Solapur, Solapur District, Maharashtra, India",
+        "lat": 17.6599,
+        "lon": 75.9064,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+    {
+        "place_id": "fallback_thane",
+        "name": "Thane",
+        "display_name": "Thane, Thane District, Maharashtra, India",
+        "lat": 19.2183,
+        "lon": 72.9781,
+        "type": "city",
+        "is_maharashtra": True,
+    },
+]
+
+
+@router.get(
+    "/search",
+    response_model=List[PlaceSearchResult],
+    summary="Search places, water bodies, and locations in Maharashtra",
+)
+def search_maharashtra_places(
+    q: str = Query(..., min_length=2, description="Place or water body name in Maharashtra"),
+):
+    """
+    Searches places, towns, cities, and water bodies restricted to Maharashtra, India.
+    - Uses OpenStreetMap Nominatim geocoding bounded to Maharashtra.
+    - Caches results to respect Nominatim usage policy (1 request/sec limit).
+    - Filters out any coordinates that lie outside Maharashtra.
+    - Includes robust fallback to ensure high reliability even in offline / sandboxed environments.
+    """
+    clean_q = q.strip()
+    cache_key = clean_q.lower()
+
+    if cache_key in _SEARCH_CACHE:
+        return _SEARCH_CACHE[cache_key]
+
+    results: List[dict] = []
+
+    # 1. Try querying OpenStreetMap Nominatim geocoding service
+    try:
+        params = {
+            "q": clean_q,
+            "format": "json",
+            "addressdetails": "1",
+            "countrycodes": "in",
+            "viewbox": "72.5,22.2,80.9,15.6",
+            "bounded": "1",
+            "limit": "8",
+        }
+        url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "AquaWatch-AI/1.0 (contact@aquawatch.ai; water-quality-map)"},
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            for item in data:
+                try:
+                    lat = float(item["lat"])
+                    lon = float(item["lon"])
+                    # Restrict to Maharashtra coordinates
+                    if 15.5 <= lat <= 22.2 and 72.5 <= lon <= 81.0:
+                        state = item.get("address", {}).get("state", "").lower()
+                        display = item.get("display_name", "").lower()
+                        if "maharashtra" in state or "maharashtra" in display or not state:
+                            results.append({
+                                "place_id": str(item.get("place_id", len(results) + 1)),
+                                "name": item.get("name") or item.get("display_name", "").split(",")[0].strip(),
+                                "display_name": item.get("display_name", ""),
+                                "lat": lat,
+                                "lon": lon,
+                                "type": item.get("type", "location"),
+                                "is_maharashtra": True,
+                            })
+                except Exception:
+                    continue
+    except Exception:
+        # Network error or timeout; fallback to local Maharashtra dataset
+        pass
+
+    # 2. Check fallback Maharashtra locations if Nominatim had no matches or failed
+    if not results:
+        q_clean = clean_q.lower()
+        q_tokens = [t.strip() for t in q_clean.replace(",", " ").replace("-", " ").split() if len(t.strip()) > 1]
+        for p in MAHARASHTRA_FALLBACK_PLACES:
+            target_text = f"{p['name']} {p['display_name']} {p['type']}".lower()
+            if q_clean in target_text or (q_tokens and all(tok in target_text for tok in q_tokens)):
+                results.append(p)
+
+    # Cache result
+    if results:
+        _SEARCH_CACHE[cache_key] = results
+
+    return results

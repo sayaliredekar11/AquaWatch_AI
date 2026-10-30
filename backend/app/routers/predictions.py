@@ -69,7 +69,7 @@ async def predict_from_stored_record(
     """
     Fetches an existing measurement record from PostgreSQL and submits it for ML prediction:
     - Returns HTTP 404 if the record does not exist
-    - Verifies that all required model features are present (returns HTTP 400 if incomplete)
+    - Verifies that all 12 required model features are present (returns HTTP 400 if incomplete)
     - Does NOT modify the original record in the database
     - Does NOT create prediction history tables
     """
@@ -80,28 +80,45 @@ async def predict_from_stored_record(
             detail=f"Water quality measurement record with ID {record_id} not found.",
         )
 
-    # Verify presence of core required model features
-    required_features = ["ph", "dissolved_oxygen", "bod", "turbidity", "tds"]
+    # Verify presence of all 12 model features
+    required_features = [
+        "dissolved_oxygen",
+        "ph",
+        "bod",
+        "cod",
+        "nitrate",
+        "ammonia_n",
+        "turbidity",
+        "tds",
+        "chlorides",
+        "sulphate",
+        "fecal_coliform",
+        "total_coliform",
+    ]
     missing = [feat for feat in required_features if getattr(record, feat) is None]
     if missing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"Incomplete measurement record: Record #{record_id} is missing required model parameters: {missing}. "
-                "Prediction cannot be performed without complete core measurements."
+                f"Incomplete measurement record: Record #{record_id} is missing required ML model parameters: {missing}. "
+                "The DecisionTreeRegressor model requires all 12 parameters to compute WQI."
             ),
         )
 
     # Construct validated prediction input from stored record
     prediction_input = PredictionInput(
-        ph=record.ph,
         dissolved_oxygen=record.dissolved_oxygen,
+        ph=record.ph,
         bod=record.bod,
+        cod=record.cod,
+        nitrate=record.nitrate,
+        ammonia_n=record.ammonia_n,
         turbidity=record.turbidity,
         tds=record.tds,
-        electrical_conductivity=record.electrical_conductivity,
-        nitrate=record.nitrate,
-        temperature=record.temperature,
+        chlorides=record.chlorides,
+        sulphate=record.sulphate,
+        fecal_coliform=record.fecal_coliform,
+        total_coliform=record.total_coliform,
     )
 
     try:

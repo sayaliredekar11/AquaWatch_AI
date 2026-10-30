@@ -6,3 +6,4 @@ body { @apply bg-mist text-ink antialiased; font-family: 'Segoe UI', system-ui, 
 .btn { @apply rounded-md px-4 py-2 text-sm font-medium transition-colors; }
 .btn-primary { @apply btn bg-ocean text-white hover:bg-cyan-800; }
 .btn-ghost { @apply btn border border-ocean text-ocean hover:bg-cyan-50; }
+.search-location-pin { background: transparent !important; border: none !important; }

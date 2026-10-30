@@ -12,6 +12,7 @@ Endpoints:
 
 from datetime import datetime, timezone, timedelta
 import hashlib
+import os
 import secrets
 from typing import Optional
 
@@ -48,7 +49,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication & Authorization"])
     "/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Register a new Laboratory Authority account with a valid invitation",
+    summary="Register a new Laboratory Authority account",
 )
 def register_user(
     payload: UserRegisterRequest,
@@ -56,66 +57,16 @@ def register_user(
 ):
     """
     Authorized Laboratory Authority registration:
-    - Requires a cryptographically verified signup invitation token.
-    - Public requests without a valid invitation token are strictly rejected.
-    - Single-use and expiration constraints are enforced.
-    - Role is permanently and securely assigned as LAB_AUTHORITY by the server.
+    - User provides name, email, and password. No invitation token is required.
+    - Strong server-side validation, duplicate email check, and Argon2 password hashing.
+    - Role is permanently and securely assigned as LAB_AUTHORITY on the server.
     - Client can never specify or override the account role.
+    - Restricted policy: Unless pre-authorized or REQUIRE_ADMIN_APPROVAL is set to false,
+      new accounts are created with is_active=False pending administrator approval.
     """
-    # 1. Require invitation token
-    if not payload.invitation_token or not payload.invitation_token.strip():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Public self-registration is disabled. A valid signup invitation token is required "
-                "to register as a Laboratory Authority. Contact your system administrator to request an invitation."
-            ),
-        )
-
-    clean_token = payload.invitation_token.strip()
-    token_hash = hashlib.sha256(clean_token.encode("utf-8")).hexdigest()
-
-    # 2. Look up invitation record by token hash (raw token is never stored in DB)
-    invitation = (
-        db.query(LabInvitation)
-        .filter(LabInvitation.token_hash == token_hash)
-        .first()
-    )
-
-    if not invitation:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid invitation token. Please verify the code or request a new invitation.",
-        )
-
-    # 3. Check if already used
-    if invitation.is_used:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This invitation token has already been used. Each invitation is strictly single-use.",
-        )
-
-    # 4. Check expiration
-    now_utc = datetime.now(timezone.utc)
-    expires_at = invitation.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-    if now_utc > expires_at:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This invitation token has expired. Please request a new invitation from an administrator.",
-        )
-
-    # 5. Check designated email restriction if present
     normalized_email = payload.email.strip().lower()
-    if invitation.email and invitation.email.strip().lower() != normalized_email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"This invitation token is restricted to the email address '{invitation.email}'.",
-        )
 
-    # 6. Verify email uniqueness
+    # 1. Verify email uniqueness (duplicate-email check)
     existing_user = db.query(User).filter(User.email == normalized_email).first()
     if existing_user:
         raise HTTPException(
@@ -123,22 +74,62 @@ def register_user(
             detail="Email is already registered. Please log in or use a different email address.",
         )
 
-    # 7. Create new Lab Authority user (role is hardcoded on server; client cannot override)
+    # 2. Check authorization & administrator approval policy
+    require_approval = os.getenv("REQUIRE_ADMIN_APPROVAL", "true").lower() in ("true", "1", "yes")
+    now_utc = datetime.now(timezone.utc)
+    is_active = False
+
+    # Check if this email was pre-authorized by an administrator in lab_invitations
+    pre_auth_invitation = (
+        db.query(LabInvitation)
+        .filter(
+            LabInvitation.email == normalized_email,
+            LabInvitation.is_used == False,
+        )
+        .first()
+    )
+
+    # Check optional legacy invitation token if provided
+    token_invitation = None
+    if payload.invitation_token and payload.invitation_token.strip():
+        clean_token = payload.invitation_token.strip()
+        token_hash = hashlib.sha256(clean_token.encode("utf-8")).hexdigest()
+        token_invitation = (
+            db.query(LabInvitation)
+            .filter(
+                LabInvitation.token_hash == token_hash,
+                LabInvitation.is_used == False,
+            )
+            .first()
+        )
+
+    active_invitation = pre_auth_invitation or token_invitation
+    if active_invitation:
+        exp = active_invitation.expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if now_utc <= exp:
+            is_active = True
+            active_invitation.is_used = True
+            active_invitation.used_at = now_utc
+    elif not require_approval:
+        is_active = True
+    else:
+        is_active = False
+
+    # 3. Securely hash password with Argon2
     hashed_pwd = hash_password(payload.password)
+
+    # 4. Create new Lab Authority user (server-assigned role; client cannot override)
     new_user = User(
         name=payload.name.strip(),
         email=normalized_email,
         hashed_password=hashed_pwd,
         role=UserRole.LAB_AUTHORITY,
-        is_active=True,
+        is_active=is_active,
     )
 
     db.add(new_user)
-
-    # 8. Mark invitation as used
-    invitation.is_used = True
-    invitation.used_at = now_utc
-
     db.commit()
     db.refresh(new_user)
 
@@ -298,7 +289,7 @@ def login_user(
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is inactive. Please contact system administrator.",
+            detail="Account is pending administrator approval. Please contact system administrator.",
         )
 
     # Enforce role restriction: Login is strictly reserved for Laboratory Authorities

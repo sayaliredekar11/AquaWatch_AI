@@ -4,6 +4,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 # 1. Load environment variables from the .env file
+env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path)
 load_dotenv()
 
 # 2. Fetch the Database URL from environment variables

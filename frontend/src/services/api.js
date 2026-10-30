@@ -94,14 +94,13 @@ export async function loginApi(email, password) {
   return tokenData
 }
 
-export async function registerApi(name, email, password, invitation_token) {
+export async function registerApi(name, email, password) {
   return await request('/auth/register', {
     method: 'POST',
     body: {
       name: name.trim(),
       email: email.trim().toLowerCase(),
       password,
-      invitation_token: invitation_token ? invitation_token.trim() : '',
     },
   })
 }
@@ -128,6 +127,59 @@ export async function getProfileApi() {
 // ==========================================================
 // GIS & Location APIs
 // ==========================================================
+
+export async function searchPlacesApi(query) {
+  if (!query || query.trim().length < 2) return []
+  const cleanQ = query.trim()
+
+  // 1. Try backend proxy first (has caching + custom User-Agent)
+  try {
+    const data = await request(`/gis/search?q=${encodeURIComponent(cleanQ)}`, {
+      method: 'GET',
+    })
+    if (Array.isArray(data) && data.length > 0) {
+      return data
+    }
+  } catch (_) {
+    // Backend fallback
+  }
+
+  // 2. Direct OpenStreetMap Nominatim query fallback
+  try {
+    const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+      cleanQ
+    )}&format=json&addressdetails=1&countrycodes=in&viewbox=72.5,22.2,80.9,15.6&bounded=1&limit=8`
+    const res = await fetch(nomUrl)
+    if (res.ok) {
+      const items = await res.json()
+      return items
+        .filter((item) => {
+          const lat = parseFloat(item.lat)
+          const lon = parseFloat(item.lon)
+          const state = item.address?.state?.toLowerCase() || ''
+          const display = item.display_name?.toLowerCase() || ''
+          return (
+            lat >= 15.5 &&
+            lat <= 22.2 &&
+            lon >= 72.5 &&
+            lon <= 81.0 &&
+            (state.includes('maharashtra') || display.includes('maharashtra') || !state)
+          )
+        })
+        .map((item) => ({
+          place_id: String(item.place_id),
+          name: item.name || item.display_name.split(',')[0].trim(),
+          display_name: item.display_name,
+          lat: parseFloat(item.lat),
+          lon: parseFloat(item.lon),
+          type: item.type || 'location',
+          is_maharashtra: true,
+        }))
+    }
+  } catch (_) {}
+
+  return []
+}
 
 export async function getGisLocationsApi() {
   return await request('/gis/locations', {

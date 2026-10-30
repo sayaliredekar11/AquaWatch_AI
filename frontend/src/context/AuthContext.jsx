@@ -106,12 +106,21 @@ export function AuthProvider({ children }) {
   }
 
   /**
-   * Register a new Lab Authority account with an administrative invitation token
+   * Register a new Lab Authority account
    */
-  const signup = async ({ name, email, password, invitation_token }) => {
+  const signup = async ({ name, email, password }) => {
     try {
-      await registerApi(name, email, password, invitation_token)
-      // Automatically log in newly created Lab Authority
+      const regUser = await registerApi(name, email, password)
+      if (regUser && regUser.is_active === false) {
+        return {
+          success: true,
+          pendingApproval: true,
+          user: regUser,
+          message:
+            'Registration submitted successfully! Your account is pending administrator approval before you can access the Laboratory Authority dashboard.',
+        }
+      }
+      // If immediately active, automatically log in
       return await login(email, password)
     } catch (err) {
       return {

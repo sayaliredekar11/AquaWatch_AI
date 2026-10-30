@@ -45,6 +45,8 @@ def create_water_body(
         name=payload.name.strip(),
         water_body_type=payload.water_body_type.strip().lower(),
         location_name=payload.location_name.strip(),
+        district=payload.district.strip() if payload.district else None,
+        state=payload.state.strip() if payload.state else "Maharashtra",
         latitude=payload.latitude,
         longitude=payload.longitude,
     )
