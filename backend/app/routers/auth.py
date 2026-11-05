@@ -14,18 +14,23 @@ from datetime import datetime, timezone, timedelta
 import hashlib
 import os
 import secrets
+import time
+from collections import defaultdict
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import LabInvitation, User, UserRole
+from app.models import LabInvitation, Laboratory, LaboratoryLicense, User, UserRole
 from app.schemas import (
     LabInvitationCreate,
     LabInvitationResponse,
     LabInvitationValidationResponse,
+    LaboratoryResponse,
+    LicenseValidationResponse,
     RoleTestResponse,
     TokenResponse,
     UserRegisterRequest,
@@ -41,29 +46,58 @@ from app.security import (
 
 router = APIRouter(prefix="/auth", tags=["Authentication & Authorization"])
 
+# -----------------------------------------------------------------
+# Anti-Abuse Rate Limiter for Invalid License Verification Attempts
+# -----------------------------------------------------------------
+_failed_license_attempts = defaultdict(list)
+FAILED_LICENSE_LIMIT = 10
+FAILED_WINDOW_SECONDS = 300  # 5 minutes
+
+
+def _check_license_rate_limit(client_ip: str):
+    """Enforces throttling against brute-force laboratory license guessing."""
+    now = time.time()
+    valid_window = [t for t in _failed_license_attempts[client_ip] if now - t < FAILED_WINDOW_SECONDS]
+    _failed_license_attempts[client_ip] = valid_window
+    if len(valid_window) >= FAILED_LICENSE_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed laboratory license verification attempts. Please wait 5 minutes before trying again.",
+        )
+
+
+def _record_failed_license_attempt(client_ip: str):
+    """Logs a failed license attempt for anti-abuse tracking."""
+    _failed_license_attempts[client_ip].append(time.time())
+
 
 # ==========================================================
-# 1. Invitation-Based Lab Authority Registration
+# 1. License-Verified Lab Authority Registration
 # ==========================================================
 @router.post(
     "/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Register a new Laboratory Authority account",
+    summary="Register a new Laboratory Authority account with license verification",
 )
 def register_user(
     payload: UserRegisterRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
-    Authorized Laboratory Authority registration:
-    - User provides name, email, and password. No invitation token is required.
-    - Strong server-side validation, duplicate email check, and Argon2 password hashing.
+    Authorized Laboratory Authority registration with License Number verification:
+    - User provides name, email, password, and registered Laboratory License Number.
+    - Validates that the license number exists in official registered laboratory records.
+    - Ensures the laboratory license is active and authorized.
+    - Automatically links the new account to the identified laboratory (no duplicate lab creation).
+    - Allows multiple staff members to register under the same valid license.
+    - Enforces duplicate email / username uniqueness.
+    - Passwords securely hashed with Argon2.
     - Role is permanently and securely assigned as LAB_AUTHORITY on the server.
     - Client can never specify or override the account role.
-    - Restricted policy: Unless pre-authorized or REQUIRE_ADMIN_APPROVAL is set to false,
-      new accounts are created with is_active=False pending administrator approval.
     """
+    client_ip = request.client.host if request.client else "unknown"
     normalized_email = payload.email.strip().lower()
 
     # 1. Verify email uniqueness (duplicate-email check)
@@ -74,12 +108,58 @@ def register_user(
             detail="Email is already registered. Please log in or use a different email address.",
         )
 
-    # 2. Check authorization & administrator approval policy
-    require_approval = os.getenv("REQUIRE_ADMIN_APPROVAL", "true").lower() in ("true", "1", "yes")
-    now_utc = datetime.now(timezone.utc)
-    is_active = False
+    # Check optional username uniqueness if provided and distinct
+    if payload.username and payload.username.strip():
+        norm_username = payload.username.strip().lower()
+        if norm_username != normalized_email:
+            existing_by_username = db.query(User).filter(User.email == norm_username).first()
+            if existing_by_username:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Username '{payload.username.strip()}' is already in use.",
+                )
 
-    # Check if this email was pre-authorized by an administrator in lab_invitations
+    # 2. Verify Laboratory License Number (Required & Checked against Database)
+    raw_license = payload.license_number or payload.laboratory_license_number
+    if not raw_license or not raw_license.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Laboratory License Number is required for Laboratory Authority registration.",
+        )
+
+    clean_license = raw_license.strip().upper()
+
+    # Enforce anti-abuse protection against repeated guessing
+    _check_license_rate_limit(client_ip)
+
+    # Check whether license exists in registered laboratory records
+    license_record = (
+        db.query(LaboratoryLicense)
+        .filter(func.upper(LaboratoryLicense.license_number) == clean_license)
+        .first()
+    )
+
+    if not license_record:
+        _record_failed_license_attempt(client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid Laboratory License Number '{clean_license}'. The license number is not registered in our authorized laboratory records.",
+        )
+
+    # Verify that the license is active and authorized for registration
+    if not license_record.is_active:
+        _record_failed_license_attempt(client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Laboratory license '{clean_license}' ({license_record.laboratory_name}) is currently inactive, suspended, or revoked. Please contact the administrator.",
+        )
+
+    # 3. Automatic account activation upon verified laboratory license registration
+    # No administrator approval required; verified laboratory license authorizes immediate active access.
+    is_active = True
+    now_utc = datetime.now(timezone.utc)
+
+    # Mark invitation as consumed if present
     pre_auth_invitation = (
         db.query(LabInvitation)
         .filter(
@@ -88,9 +168,10 @@ def register_user(
         )
         .first()
     )
+    if pre_auth_invitation:
+        pre_auth_invitation.is_used = True
+        pre_auth_invitation.used_at = now_utc
 
-    # Check optional legacy invitation token if provided
-    token_invitation = None
     if payload.invitation_token and payload.invitation_token.strip():
         clean_token = payload.invitation_token.strip()
         token_hash = hashlib.sha256(clean_token.encode("utf-8")).hexdigest()
@@ -102,31 +183,24 @@ def register_user(
             )
             .first()
         )
+        if token_invitation:
+            token_invitation.is_used = True
+            token_invitation.used_at = now_utc
 
-    active_invitation = pre_auth_invitation or token_invitation
-    if active_invitation:
-        exp = active_invitation.expires_at
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        if now_utc <= exp:
-            is_active = True
-            active_invitation.is_used = True
-            active_invitation.used_at = now_utc
-    elif not require_approval:
-        is_active = True
-    else:
-        is_active = False
-
-    # 3. Securely hash password with Argon2
+    # 4. Securely hash password with Argon2
     hashed_pwd = hash_password(payload.password)
 
-    # 4. Create new Lab Authority user (server-assigned role; client cannot override)
+    # 5. Create new Lab Authority user linked to the verified laboratory
     new_user = User(
         name=payload.name.strip(),
         email=normalized_email,
         hashed_password=hashed_pwd,
         role=UserRole.LAB_AUTHORITY,
         is_active=is_active,
+        laboratory_id=license_record.id,
+        laboratory_license_number=license_record.license_number,
+        laboratory_name=license_record.laboratory_name,
+        designation=payload.designation.strip() if payload.designation else "Authorized Laboratory Analyst",
     )
 
     db.add(new_user)
@@ -134,6 +208,62 @@ def register_user(
     db.refresh(new_user)
 
     return new_user
+
+
+# ==========================================================
+# 2. Validate Laboratory License Number (Pre-flight check)
+# ==========================================================
+@router.get(
+    "/licenses/validate",
+    response_model=LicenseValidationResponse,
+    summary="Validate a Laboratory License Number before submitting registration",
+)
+def validate_laboratory_license(
+    license_number: str = Query(..., min_length=1, description="Laboratory License Number"),
+    db: Session = Depends(get_db),
+):
+    """
+    Checks the existence, authorization, and active status of a Laboratory License Number.
+    Safe for frontend validation without leaking internal secrets.
+    """
+    clean_license = license_number.strip().upper()
+    license_record = (
+        db.query(LaboratoryLicense)
+        .filter(func.upper(LaboratoryLicense.license_number) == clean_license)
+        .first()
+    )
+
+    if not license_record:
+        return {
+            "valid": False,
+            "license_number": clean_license,
+            "laboratory_name": None,
+            "district": None,
+            "state": None,
+            "is_active": False,
+            "message": f"License '{clean_license}' is not registered with the water quality regulatory authority.",
+        }
+
+    if not license_record.is_active:
+        return {
+            "valid": False,
+            "license_number": license_record.license_number,
+            "laboratory_name": license_record.laboratory_name,
+            "district": None,
+            "state": None,
+            "is_active": False,
+            "message": f"Laboratory license '{clean_license}' ({license_record.laboratory_name}) is currently inactive or suspended.",
+        }
+
+    return {
+        "valid": True,
+        "license_number": license_record.license_number,
+        "laboratory_name": license_record.laboratory_name,
+        "district": None,
+        "state": "Maharashtra",
+        "is_active": True,
+        "message": f"Verified: Registered to {license_record.laboratory_name}.",
+    }
 
 
 # ==========================================================
@@ -274,10 +404,21 @@ def login_user(
     - Restricts login exclusively to accounts with the LAB_AUTHORITY role
     - Returns signed JWT bearer access token
     """
-    normalized_email = form_data.username.strip().lower()
+    normalized_identifier = form_data.username.strip().lower()
 
-    # Look up user by email
-    user = db.query(User).filter(User.email == normalized_email).first()
+    # Look up user by case-insensitive email first, then fallback to name/username
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == normalized_identifier)
+        .first()
+    )
+    if not user:
+        user = (
+            db.query(User)
+            .filter(func.lower(User.name) == normalized_identifier)
+            .first()
+        )
+
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -285,15 +426,27 @@ def login_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Check account active status
+    # Check account active status (auto-activate if user is registered under an active laboratory license)
+    if not user.is_active and user.laboratory_license_number:
+        lic = (
+            db.query(LaboratoryLicense)
+            .filter(func.upper(LaboratoryLicense.license_number) == user.laboratory_license_number.strip().upper())
+            .first()
+        )
+        if lic and lic.is_active:
+            user.is_active = True
+            db.commit()
+            db.refresh(user)
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is pending administrator approval. Please contact system administrator.",
+            detail="Account is inactive or suspended. Please contact system administrator.",
         )
 
     # Enforce role restriction: Login is strictly reserved for Laboratory Authorities
-    if user.role != UserRole.LAB_AUTHORITY:
+    user_role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if user_role_str.upper() != UserRole.LAB_AUTHORITY.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
@@ -305,7 +458,7 @@ def login_user(
 
     # Generate JWT token
     access_token, expires_in = create_access_token(
-        data={"sub": user.email, "role": user.role.value}
+        data={"sub": user.email, "role": user_role_str}
     )
 
     return {

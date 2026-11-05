@@ -88,7 +88,7 @@ def get_safety_configuration() -> Dict[str, Any]:
 # ==========================================================
 
 LIMITATIONS_DISCLOSURE = (
-    "DEMO RULE-BASED SCREENING ASSESSMENT ONLY. This evaluation tests five physical and chemical "
+    "RULE-BASED SCREENING ASSESSMENT (CPCB & BIS IS 10500:2012). This evaluation tests five physical and chemical "
     "parameters against CPCB Class C and BIS IS 10500:2012 baseline guidelines. It does NOT analyze "
     "microbial pathogens (such as E. coli, fecal coliforms, Giardia, or enteric viruses), toxic heavy "
     "metals (arsenic, lead, mercury, cadmium), or agricultural/industrial chemicals (pesticides, PFAS). "
@@ -101,6 +101,7 @@ LIMITATIONS_DISCLOSURE = (
 def evaluate_sample_safety(
     measurements: Dict[str, Optional[float]],
     sample_name: str = "Test Sample",
+    sample_type: Optional[str] = "Surface Water",
     force_enabled: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
@@ -109,7 +110,7 @@ def evaluate_sample_safety(
     Returns:
         dict containing:
         - classification: 'SAFE', 'HARMFUL', or 'INCONCLUSIVE'
-        - result_type: 'DEMO_RULE_BASED'
+        - result_type: 'RULE_BASED_SCREENING'
         - standard_name: Name of regulatory standard
         - standard_intended_use: Description of intended water use
         - parameter_assessments: Detailed per-parameter evaluation
@@ -135,7 +136,7 @@ def evaluate_sample_safety(
     if not is_enabled or not intended_use:
         return {
             "classification": "INCONCLUSIVE",
-            "result_type": "DEMO_RULE_BASED",
+            "result_type": "RULE_BASED_SCREENING",
             "standard_name": standard_name if is_enabled else "Unspecified / Disabled Standard",
             "standard_intended_use": intended_use if is_enabled else "Unspecified Intended Use",
             "parameter_assessments": [],
@@ -214,7 +215,7 @@ def evaluate_sample_safety(
 
         return {
             "classification": "INCONCLUSIVE",
-            "result_type": "DEMO_RULE_BASED",
+            "result_type": "RULE_BASED_SCREENING",
             "standard_name": standard_name,
             "standard_intended_use": intended_use,
             "parameter_assessments": parameter_assessments,
@@ -263,7 +264,17 @@ def evaluate_sample_safety(
     bod_max = thresholds["bod"]["max"]
     if bod > bod_max:
         failed_params.append("bod")
-        msg = f"Excessive Organic Load: BOD {bod} mg/L exceeds the permissible threshold ({bod_max} mg/L). Indicates significant biodegradable pollution."
+        delta = round(bod - bod_max, 2)
+        if delta <= 1.0:
+            msg = (
+                f"Elevated Organic Load: BOD {bod} mg/L exceeds the permissible threshold ({bod_max} mg/L) "
+                f"by {delta} mg/L. Exceeds CPCB Class C statutory limit for raw surface water."
+            )
+        else:
+            msg = (
+                f"Excessive Organic Load: BOD {bod} mg/L exceeds the permissible threshold ({bod_max} mg/L) "
+                f"by {delta} mg/L. Indicates significant biodegradable organic pollution."
+            )
         parameter_assessments.append(_make_param("bod", bod, f"<= {bod_max} mg/L", "FAIL", msg))
         reasons.append(msg)
     else:
@@ -353,7 +364,13 @@ def evaluate_sample_safety(
     # 7. Final Classification Decision
     if failed_params:
         classification = "HARMFUL"
-        reasons.insert(0, f"Sample fails {len(failed_params)} configured safety criteria ({', '.join(failed_params)}).")
+        param_names = ", ".join([_get_display_name(p) for p in failed_params])
+        reasons.insert(
+            0,
+            f"Sample fails {len(failed_params)} configured statutory safety criterion ({param_names}) "
+            f"under {standard_name} standards. Regulatory safety screening applies the single-barrier "
+            f"limiting-factor rule: every individual parameter must meet permissible limits."
+        )
     else:
         classification = "SAFE"
         reasons.insert(
@@ -363,7 +380,7 @@ def evaluate_sample_safety(
 
     return {
         "classification": classification,
-        "result_type": "DEMO_RULE_BASED",
+        "result_type": "RULE_BASED_SCREENING",
         "standard_name": standard_name,
         "standard_intended_use": intended_use,
         "parameter_assessments": parameter_assessments,

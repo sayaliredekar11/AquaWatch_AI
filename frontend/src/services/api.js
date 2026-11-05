@@ -94,14 +94,38 @@ export async function loginApi(email, password) {
   return tokenData
 }
 
-export async function registerApi(name, email, password) {
+export async function registerApi(nameOrPayload, maybeEmail, maybePassword, maybeLicense, maybeExtra = {}) {
+  // Support both object payload and positional arguments
+  let payload = {}
+  if (typeof nameOrPayload === 'object' && nameOrPayload !== null) {
+    payload = {
+      name: nameOrPayload.name?.trim(),
+      email: nameOrPayload.email?.trim().toLowerCase(),
+      password: nameOrPayload.password,
+      license_number: (nameOrPayload.license_number || nameOrPayload.licenseNumber)?.trim().toUpperCase(),
+      designation: nameOrPayload.designation?.trim(),
+      ...nameOrPayload,
+    }
+  } else {
+    payload = {
+      name: nameOrPayload ? String(nameOrPayload).trim() : '',
+      email: maybeEmail ? String(maybeEmail).trim().toLowerCase() : '',
+      password: maybePassword,
+      license_number: maybeLicense ? String(maybeLicense).trim().toUpperCase() : undefined,
+      ...maybeExtra,
+    }
+  }
+
   return await request('/auth/register', {
     method: 'POST',
-    body: {
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      password,
-    },
+    body: payload,
+  })
+}
+
+export async function validateLicenseApi(licenseNumber) {
+  const clean = (licenseNumber || '').trim().toUpperCase()
+  return await request(`/auth/licenses/validate?license_number=${encodeURIComponent(clean)}`, {
+    method: 'GET',
   })
 }
 
@@ -283,6 +307,22 @@ export async function testWaterQualityApi(testPayload) {
     method: 'POST',
     body: testPayload,
   })
+}
+
+export async function getWaterTestingReportsApi(params = {}) {
+  const query = new URLSearchParams()
+  if (params.skip !== undefined) query.append('skip', params.skip)
+  if (params.limit !== undefined) query.append('limit', params.limit)
+  if (params.search) query.append('search', params.search)
+  if (params.water_body_id) query.append('water_body_id', params.water_body_id)
+  const qs = query.toString() ? `?${query.toString()}` : ''
+  return await request(`/water-quality/reports${qs}`, {
+    method: 'GET',
+  })
+}
+
+export function getReportDownloadUrl(reportId) {
+  return `${API_BASE_URL}/water-quality/reports/${encodeURIComponent(reportId)}/download`
 }
 
 export async function getDemoSamplesApi() {

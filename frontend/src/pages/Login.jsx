@@ -12,12 +12,15 @@ import {
   Info,
   Terminal,
   ArrowLeft,
+  Clock,
 } from 'lucide-react'
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [isPendingApproval, setIsPendingApproval] = useState(false)
+  const [pendingEmail, setPendingEmail] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const { login, user, isLabAuthority } = useAuth()
   const navigate = useNavigate()
@@ -30,13 +33,20 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
+    setIsPendingApproval(false)
     setSubmitting(true)
 
+    const cleanEmail = email.trim()
+
     try {
-      const result = await login(email, password)
+      const result = await login(cleanEmail, password)
       if (result.success) {
         navigate('/dashboard', { replace: true })
       } else {
+        if (result.isPending) {
+          setIsPendingApproval(true)
+          setPendingEmail(cleanEmail)
+        }
         setError(result.error)
       }
     } catch (err) {
@@ -47,11 +57,11 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-65px)] bg-mist flex items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
-      <div className="w-full max-w-md space-y-6">
+    <div className="min-h-[calc(100vh-65px)] bg-mist flex items-center justify-center px-4 py-12 sm:px-6 lg:px-8 animate-fade-in">
+      <div className="w-full max-w-md space-y-6 animate-fade-slide-up">
         {/* Header */}
         <div className="text-center space-y-2">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-ocean/10 text-ocean mb-1">
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-ocean/10 text-ocean mb-1 transition-transform hover:scale-105">
             <FlaskConical className="h-6 w-6" />
           </div>
           <div className="inline-block rounded-full bg-slate-900 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-white">
@@ -66,16 +76,32 @@ export default function Login() {
         </div>
 
         {/* Login Card */}
-        <div className="rounded-xl border border-slate-200/80 bg-white p-6 sm:p-8 shadow-sm space-y-6">
-          {error && (
-            <div className="rounded-lg bg-rose-50 border border-rose-200 p-3.5 text-xs font-semibold text-rose-800 flex items-start gap-2.5">
+        <div className="rounded-xl border border-slate-200/80 bg-white p-6 sm:p-8 shadow-sm space-y-6 card-hover-subtle">
+          {isPendingApproval ? (
+            <div className="rounded-lg bg-amber-50 border border-amber-300 p-4 text-xs font-semibold text-amber-900 space-y-2.5 animate-fade-slide-down">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 shrink-0 text-amber-700" />
+                <span className="font-bold text-sm">Account Pending Administrator Approval</span>
+              </div>
+              <p className="font-normal text-amber-800 leading-relaxed text-[12px]">
+                Your Laboratory Authority registration for <strong className="text-amber-950 font-bold">{pendingEmail || email}</strong> has been received and credentials are verified. Access is awaiting administrator activation before you can sign in.
+              </p>
+              <div className="pt-2 border-t border-amber-200/80 font-mono text-[11px] text-amber-950">
+                <span className="font-sans font-medium text-amber-900">Administrator approval command:</span>
+                <div className="mt-1 bg-amber-100/90 rounded p-2 font-bold select-all text-slate-900 font-mono text-[11px] border border-amber-300/60">
+                  python assign_lab_authority.py --approve {pendingEmail || email}
+                </div>
+              </div>
+            </div>
+          ) : error ? (
+            <div className="rounded-lg bg-rose-50 border border-rose-200 p-3.5 text-xs font-semibold text-rose-800 flex items-start gap-2.5 animate-fade-slide-down">
               <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5 text-rose-600" />
               <div className="space-y-1">
                 <p className="font-bold">Access Denied</p>
                 <p className="font-normal text-rose-700 leading-relaxed">{error}</p>
               </div>
             </div>
-          )}
+          ) : null}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -88,7 +114,11 @@ export default function Login() {
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value)
+                    if (error) setError('')
+                    if (isPendingApproval) setIsPendingApproval(false)
+                  }}
                   className="input pl-9 text-slate-800 text-sm"
                   placeholder="lab@aquawatch.ai"
                   autoComplete="username"
@@ -106,7 +136,11 @@ export default function Login() {
                   type="password"
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value)
+                    if (error) setError('')
+                    if (isPendingApproval) setIsPendingApproval(false)
+                  }}
                   className="input pl-9 text-slate-800 text-sm"
                   placeholder="••••••••"
                   autoComplete="current-password"
@@ -137,20 +171,17 @@ export default function Login() {
           <div className="rounded-lg bg-slate-50 border border-slate-200 p-3.5 space-y-2 text-xs text-slate-600">
             <div className="flex items-center gap-1.5 text-slate-800 font-semibold">
               <Info className="h-4 w-4 text-ocean shrink-0" />
-              <span>Administrative Account Provisioning</span>
+              <span>Laboratory Authority Access</span>
             </div>
             <p className="text-[11px] leading-relaxed text-slate-600">
-              Normal users do not need an account to view water quality maps, intelligence summaries, or historical data.
+              Laboratory Authorities can register on the signup page with a verified Laboratory License Number for immediate access, or be provisioned directly by an administrator:
             </p>
-            <p className="text-[11px] leading-relaxed text-slate-600">
-              Laboratory Authority credentials are created directly on the server by the system administrator:
-            </p>
-            <div className="rounded bg-slate-900 text-slate-200 p-2 font-mono text-[10.5px] space-y-1 overflow-x-auto">
+            <div className="rounded bg-slate-900 text-slate-200 p-2.5 font-mono text-[10.5px] space-y-1 overflow-x-auto">
               <div className="flex items-center gap-1 text-cyan-400 font-sans text-[10px] uppercase font-bold">
                 <Terminal className="h-3 w-3" />
                 <span>Admin Provisioning Command</span>
               </div>
-              <div className="select-all">
+              <div className="select-all text-slate-300 mt-0.5">
                 python assign_lab_authority.py --create --name "Dr. Patil" --email "patil@lab.aquawatch.ai" --password "SecurePass123!"
               </div>
             </div>

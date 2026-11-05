@@ -44,15 +44,57 @@ class DbHealthResponse(BaseModel):
 class UserRegisterRequest(BaseModel):
     """
     Schema for user registration.
-    Authorized Laboratory Authority signup.
+    Authorized Laboratory Authority signup requires a verified Laboratory License Number.
     Public registration can NEVER supply or override a role; role is assigned securely by the backend.
     """
     name: str = Field(..., min_length=2, max_length=100, description="User's full name")
     email: EmailStr = Field(..., description="Valid unique email address")
     password: str = Field(..., min_length=6, max_length=128, description="Password (at least 6 characters)")
+    license_number: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=100,
+        description="Official Laboratory License Number registered with regulatory authority",
+    )
+    laboratory_license_number: Optional[str] = Field(
+        None,
+        description="Synonym for license_number",
+    )
+    username: Optional[str] = Field(
+        None,
+        description="Optional username alias (defaults to email)",
+    )
+    designation: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Optional laboratory role/designation (e.g. Senior Water Quality Analyst)",
+    )
     invitation_token: Optional[str] = Field(None, description="Optional legacy invitation token (deprecated)")
 
     model_config = ConfigDict(extra="ignore")
+
+
+class LaboratoryResponse(BaseModel):
+    """Safe public representation of a registered laboratory."""
+    id: int
+    name: str
+    license_number: str
+    district: Optional[str] = None
+    state: Optional[str] = None
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LicenseValidationResponse(BaseModel):
+    """Response schema for public pre-flight verification of a laboratory license number."""
+    valid: bool
+    license_number: Optional[str] = None
+    laboratory_name: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    is_active: bool = False
+    message: str
 
 
 class LabInvitationCreate(BaseModel):
@@ -88,6 +130,10 @@ class UserResponse(BaseModel):
     role: UserRole
     is_active: bool
     created_at: datetime
+    laboratory_id: Optional[int] = None
+    laboratory_name: Optional[str] = None
+    laboratory_license_number: Optional[str] = None
+    designation: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -179,11 +225,22 @@ class WaterQualityRecordBase(BaseModel):
     ammonia_n: Optional[float] = Field(None, ge=0.0, description="Ammonia Nitrogen (mg/L)")
     chlorides: Optional[float] = Field(None, ge=0.0, description="Chlorides (mg/L)")
     sulphate: Optional[float] = Field(None, ge=0.0, description="Sulphate (mg/L)")
+    phosphate: Optional[float] = Field(None, ge=0.0, description="Phosphate (mg/L)")
     fecal_coliform: Optional[float] = Field(None, ge=0.0, description="Fecal Coliform (MPN/100mL)")
     total_coliform: Optional[float] = Field(None, ge=0.0, description="Total Coliform (MPN/100mL)")
     sample_name: Optional[str] = Field(None, max_length=100, description="Sample label or identifier")
+    sample_id: Optional[str] = Field(None, max_length=100, description="Auto-generated unique sample ID")
+    sample_type: Optional[str] = Field(None, max_length=100, description="Sample category: Surface Water, etc.")
+    laboratory_name: Optional[str] = Field(None, max_length=200, description="Testing laboratory name")
+    lab_authority_name: Optional[str] = Field(None, max_length=100, description="Testing technician/analyst name")
+    testing_date: Optional[datetime] = Field(None, description="Laboratory testing timestamp")
+    testing_method: Optional[str] = Field(None, max_length=150, description="Analytical test method")
+    remarks: Optional[str] = Field(None, max_length=500, description="Observations and field remarks")
+    report_id: Optional[str] = Field(None, max_length=100, description="Unique report identifier")
+    pdf_path: Optional[str] = Field(None, max_length=300, description="Saved PDF file path")
     wqi_score: Optional[float] = Field(None, description="Predicted numerical WQI score")
     wqi_prediction: Optional[str] = Field(None, description="Predicted WQI classification or score string")
+    wqi_category: Optional[str] = Field(None, description="Predicted water quality category (e.g. Good, Poor)")
     wqi_status: Optional[str] = Field(None, description="ML inference execution status")
     wqi_algorithm: Optional[str] = Field(None, description="Model algorithm used")
     safety_classification: Optional[str] = Field(None, description="Rule-based screening: SAFE, HARMFUL, or INCONCLUSIVE")
@@ -210,11 +267,22 @@ class WaterQualityRecordUpdate(BaseModel):
     ammonia_n: Optional[float] = Field(None, ge=0.0)
     chlorides: Optional[float] = Field(None, ge=0.0)
     sulphate: Optional[float] = Field(None, ge=0.0)
+    phosphate: Optional[float] = Field(None, ge=0.0)
     fecal_coliform: Optional[float] = Field(None, ge=0.0)
     total_coliform: Optional[float] = Field(None, ge=0.0)
     sample_name: Optional[str] = Field(None, max_length=100)
+    sample_id: Optional[str] = Field(None, max_length=100)
+    sample_type: Optional[str] = Field(None, max_length=100)
+    laboratory_name: Optional[str] = Field(None, max_length=200)
+    lab_authority_name: Optional[str] = Field(None, max_length=100)
+    testing_date: Optional[datetime] = None
+    testing_method: Optional[str] = Field(None, max_length=150)
+    remarks: Optional[str] = Field(None, max_length=500)
+    report_id: Optional[str] = Field(None, max_length=100)
+    pdf_path: Optional[str] = Field(None, max_length=300)
     wqi_score: Optional[float] = None
     wqi_prediction: Optional[str] = None
+    wqi_category: Optional[str] = None
     wqi_status: Optional[str] = None
     wqi_algorithm: Optional[str] = None
     safety_classification: Optional[str] = None
@@ -253,6 +321,7 @@ class MeasurementSnapshot(BaseModel):
     ammonia_n: Optional[float] = Field(None, description="Ammonia Nitrogen (mg/L)")
     chlorides: Optional[float] = Field(None, description="Chlorides (mg/L)")
     sulphate: Optional[float] = Field(None, description="Sulphate (mg/L)")
+    phosphate: Optional[float] = Field(None, description="Phosphate (mg/L)")
     fecal_coliform: Optional[float] = Field(None, description="Fecal Coliform (MPN/100mL)")
     total_coliform: Optional[float] = Field(None, description="Total Coliform (MPN/100mL)")
     wqi_score: Optional[float] = Field(None, description="Calculated WQI Score")
@@ -275,6 +344,7 @@ class GISLocationMarker(BaseModel):
     latest_measured_at: Optional[datetime] = None
     latest_measurements: Optional[MeasurementSnapshot] = None
     latest_wqi_score: Optional[float] = None
+    latest_wqi_category: Optional[str] = None
     latest_safety_classification: Optional[str] = None
     water_quality_status: str = Field("UNKNOWN", description="Current status indicator: UNKNOWN (pending standards)")
     status_reason: str = Field(..., description="Explanation of water quality status")
@@ -298,6 +368,7 @@ class GISLocationDetail(BaseModel):
     latest_measured_at: Optional[datetime] = None
     latest_measurements: Optional[MeasurementSnapshot] = None
     latest_wqi_score: Optional[float] = None
+    latest_wqi_category: Optional[str] = None
     latest_safety_classification: Optional[str] = None
     water_quality_status: str
     status_reason: str
@@ -323,12 +394,17 @@ class LocationHistoryItem(BaseModel):
     ammonia_n: Optional[float] = None
     chlorides: Optional[float] = None
     sulphate: Optional[float] = None
+    phosphate: Optional[float] = None
     fecal_coliform: Optional[float] = None
     total_coliform: Optional[float] = None
     sample_name: Optional[str] = None
+    sample_id: Optional[str] = None
+    report_id: Optional[str] = None
     wqi_score: Optional[float] = None
+    wqi_category: Optional[str] = None
     wqi_status: Optional[str] = None
     safety_classification: Optional[str] = None
+    pdf_path: Optional[str] = None
     is_demo: bool = False
 
 
@@ -344,6 +420,7 @@ class LocationHistoryResponse(BaseModel):
     latitude: float
     longitude: float
     latest_wqi_score: Optional[float] = None
+    latest_wqi_category: Optional[str] = None
     latest_wqi_status: Optional[str] = None
     latest_safety_classification: Optional[str] = None
     is_demo: bool = False
@@ -399,6 +476,11 @@ class RecentMeasurementItem(BaseModel):
     electrical_conductivity: Optional[float] = None
     nitrate: Optional[float] = None
     temperature: Optional[float] = None
+    sample_id: Optional[str] = None
+    report_id: Optional[str] = None
+    wqi_score: Optional[float] = None
+    wqi_category: Optional[str] = None
+    pdf_path: Optional[str] = None
     measured_at: datetime
     created_at: datetime
 
@@ -503,9 +585,18 @@ class WaterQualityTestRequest(BaseModel):
     cod: Optional[float] = Field(None, ge=0.0, description="Chemical Oxygen Demand in mg/L")
     ammonia_n: Optional[float] = Field(None, ge=0.0, description="Ammonia Nitrogen in mg/L")
     chlorides: Optional[float] = Field(None, ge=0.0, description="Chlorides in mg/L")
+    chloride: Optional[float] = Field(None, ge=0.0, description="Chloride in mg/L (synonym for chlorides)")
     sulphate: Optional[float] = Field(None, ge=0.0, description="Sulphate in mg/L")
+    phosphate: Optional[float] = Field(None, ge=0.0, description="Phosphate in mg/L")
     fecal_coliform: Optional[float] = Field(None, ge=0.0, description="Fecal Coliform in MPN/100mL")
     total_coliform: Optional[float] = Field(None, ge=0.0, description="Total Coliform in MPN/100mL")
+    sample_id: Optional[str] = Field(default=None, max_length=100, description="Auto-generated unique sample ID")
+    sample_type: Optional[str] = Field(default="Surface Water", max_length=100, description="Type of sample: Surface Water, Groundwater, etc.")
+    laboratory_name: Optional[str] = Field(default="AquaWatch Central Water Testing Lab - Maharashtra", max_length=200, description="Testing lab name")
+    lab_authority_name: Optional[str] = Field(default=None, max_length=100, description="Authenticated lab technician name")
+    testing_date: Optional[datetime] = Field(default=None, description="Date and time testing was performed")
+    testing_method: Optional[str] = Field(default="Standard Methods (APHA / IS 3025)", max_length=150, description="Laboratory testing method")
+    remarks: Optional[str] = Field(default=None, max_length=500, description="Optional field observations")
     location_id: Optional[int] = Field(default=None, description="Database ID of the monitored location")
     water_body_id: Optional[int] = Field(default=None, description="Target water body ID (synonym for location_id)")
     sampled_at: Optional[datetime] = Field(default=None, description="Timestamp when sample was collected")
@@ -543,9 +634,11 @@ class WaterQualityTestResponse(BaseModel):
     """
     status: str = Field(default="SUCCESS", description="Evaluation status (e.g. SUCCESS)")
     classification: str = Field(..., description="Safety classification: SAFE, HARMFUL, or INCONCLUSIVE")
-    result_type: str = Field(default="DEMO_RULE_BASED", description="Assessment type: DEMO_RULE_BASED")
+    safety_status: Optional[str] = Field(default=None, description="Safety classification alias (SAFE, HARMFUL, INCONCLUSIVE)")
+    is_safe: Optional[bool] = Field(default=None, description="True if classification is SAFE")
+    result_type: str = Field(default="RULE_BASED_SCREENING", description="Assessment type: RULE_BASED_SCREENING")
     sample_name: str = Field(..., description="Name or identifier of tested sample")
-    is_demo: bool = Field(default=True, description="True if marked as demo data")
+    is_demo: bool = Field(default=False, description="True if marked as demo data")
     standard_name: str = Field(..., description="Name of the standard baseline evaluated against")
     standard_intended_use: str = Field(..., description="Intended water use category for the standard")
     parameters_received: Dict[str, Optional[float]] = Field(..., description="Submitted measurements")
@@ -565,11 +658,64 @@ class WaterQualityTestResponse(BaseModel):
     water_body_name: Optional[str] = Field(default=None, description="Name of the water body")
     district: Optional[str] = Field(default=None, description="District name")
     state: Optional[str] = Field(default=None, description="State name")
+    sample_id: Optional[str] = Field(default=None, description="Unique sample identifier")
+    sample_type: Optional[str] = Field(default=None, description="Type of water sample")
+    laboratory_name: Optional[str] = Field(default=None, description="Testing laboratory name")
+    lab_authority_name: Optional[str] = Field(default=None, description="Authorized analyst name")
+    testing_date: Optional[datetime] = Field(default=None, description="Testing date and time")
+    testing_method: Optional[str] = Field(default=None, description="Laboratory testing method")
+    remarks: Optional[str] = Field(default=None, description="Analytical remarks and observations")
+    report_id: Optional[str] = Field(default=None, description="Unique generated Report ID")
+    pdf_path: Optional[str] = Field(default=None, description="Backend storage path of generated PDF")
+    pdf_url: Optional[str] = Field(default=None, description="Download URL endpoint for PDF report")
+    report_download_url: Optional[str] = Field(default=None, description="Download URL endpoint for PDF report (synonym for pdf_url)")
+    wqi_category: Optional[str] = Field(default=None, description="Predicted water quality category")
     ml_model_status: str = Field(default="UNAVAILABLE", description="Status of ML model deployment")
     ml_model_details: str = Field(..., description="Explanation regarding ML model integration")
     ml_prediction: Optional[PredictionResponse] = Field(None, description="Trained ML model WQI prediction output when all 12 features are supplied")
     wqi_score: Optional[float] = Field(default=None, description="Predicted numerical WQI score")
     message: str = Field(..., description="Human-readable server summary")
+
+
+class WaterTestingReportSummary(BaseModel):
+    """
+    Summary of an archived or newly created laboratory water testing report.
+    Supports historical inspection and PDF retrieval by Sample ID or Report ID.
+    """
+    id: int
+    report_id: Optional[str] = None
+    sample_id: Optional[str] = None
+    sample_name: Optional[str] = None
+    sample_type: Optional[str] = None
+    water_body_id: int
+    water_body_name: Optional[str] = None
+    water_body_type: Optional[str] = None
+    location_name: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    measured_at: datetime
+    testing_date: Optional[datetime] = None
+    laboratory_name: Optional[str] = None
+    lab_authority_name: Optional[str] = None
+    testing_method: Optional[str] = None
+    remarks: Optional[str] = None
+    wqi_score: Optional[float] = None
+    wqi_category: Optional[str] = None
+    wqi_status: Optional[str] = None
+    safety_classification: Optional[str] = None
+    pdf_path: Optional[str] = None
+    pdf_url: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WaterTestingReportListResponse(BaseModel):
+    """Paginated list of previous water testing records and PDF reports."""
+    total: int
+    items: List[WaterTestingReportSummary]
 
 
 

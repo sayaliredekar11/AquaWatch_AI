@@ -27,7 +27,74 @@ from app.database import Base
 
 
 # ==========================================================
-# 1. User & Role Models (Day 2)
+# 1. Laboratory & License Models
+# ==========================================================
+
+class LaboratoryLicense(Base):
+    """
+    Approved and pre-registered laboratory licenses.
+    Maintains official license numbers, status ('active'/'inactive'), and laboratory name.
+    """
+    __tablename__ = "laboratory_licenses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    license_number = Column(String(100), unique=True, index=True, nullable=False)
+    laboratory_name = Column(String(200), nullable=False)
+    status = Column(String(20), nullable=False, default="active", server_default="active")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    staff_members = relationship("User", back_populates="laboratory_license")
+
+    @property
+    def is_active(self) -> bool:
+        return (self.status or "").strip().lower() == "active"
+
+    @property
+    def name(self) -> str:
+        return self.laboratory_name
+
+    def __repr__(self):
+        return f"<LaboratoryLicense(id={self.id}, license='{self.license_number}', name='{self.laboratory_name}', status='{self.status}')>"
+
+
+class Laboratory(Base):
+    """
+    Registered and authorized water testing laboratory entity (legacy metadata).
+    """
+    __tablename__ = "laboratories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    license_number = Column(String(100), unique=True, index=True, nullable=False)
+    issuing_authority = Column(
+        String(200),
+        nullable=True,
+        default="Maharashtra Water Quality Regulatory Authority",
+        server_default="Maharashtra Water Quality Regulatory Authority",
+    )
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    district = Column(String(100), nullable=True)
+    state = Column(String(100), nullable=True, default="Maharashtra", server_default="Maharashtra")
+    contact_email = Column(String(255), nullable=True)
+    contact_phone = Column(String(50), nullable=True)
+    address = Column(String(300), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    def __repr__(self):
+        return f"<Laboratory(id={self.id}, name='{self.name}', license='{self.license_number}', is_active={self.is_active})>"
+
+
+# ==========================================================
+# 2. User & Role Models (Day 2)
 # ==========================================================
 
 class UserRole(str, enum.Enum):
@@ -62,6 +129,24 @@ class User(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+    # Laboratory association & license fields
+    laboratory_id = Column(
+        Integer,
+        ForeignKey("laboratory_licenses.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    laboratory_license_number = Column(String(100), nullable=True, index=True)
+    laboratory_name = Column(String(200), nullable=True)
+    designation = Column(String(100), nullable=True)
+
+    # Relationships
+    laboratory_license = relationship("LaboratoryLicense", back_populates="staff_members")
+
+    @property
+    def laboratory(self):
+        return self.laboratory_license
 
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', role='{self.role}', is_active={self.is_active})>"
@@ -144,11 +229,22 @@ class WaterQualityRecord(Base):
     ammonia_n = Column(Float, nullable=True)
     chlorides = Column(Float, nullable=True)
     sulphate = Column(Float, nullable=True)
+    phosphate = Column(Float, nullable=True)
     fecal_coliform = Column(Float, nullable=True)
     total_coliform = Column(Float, nullable=True)
     sample_name = Column(String(100), nullable=True)
+    sample_id = Column(String(100), nullable=True, index=True)
+    sample_type = Column(String(100), nullable=True, default="Surface Water")
+    laboratory_name = Column(String(200), nullable=True)
+    lab_authority_name = Column(String(100), nullable=True)
+    testing_date = Column(DateTime(timezone=True), nullable=True)
+    testing_method = Column(String(150), nullable=True)
+    remarks = Column(String(500), nullable=True)
+    report_id = Column(String(100), nullable=True, index=True)
+    pdf_path = Column(String(300), nullable=True)
     wqi_score = Column(Float, nullable=True)
     wqi_prediction = Column(String(50), nullable=True)
+    wqi_category = Column(String(100), nullable=True)
     wqi_status = Column(String(50), nullable=True)
     wqi_algorithm = Column(String(100), nullable=True)
     safety_classification = Column(String(50), nullable=True)

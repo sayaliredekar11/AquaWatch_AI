@@ -56,9 +56,8 @@ def list_map_locations(
     """
     Returns water bodies with valid latitude and longitude coordinates for map rendering.
     - Excludes locations with missing or out-of-bounds coordinates
-    - Combines verified database stations with distinct Maharashtra demonstration stations
-    - Includes the latest water quality measurement for each location
-    - Clearly flags synthetic data with is_demo=True
+    - Queries verified database monitoring stations from PostgreSQL
+    - Includes the latest laboratory water quality measurement for each location
     - Publicly accessible without authentication
     """
     if start_date and end_date and start_date > end_date:
@@ -97,8 +96,8 @@ def get_map_location_details(
 ):
     """
     Returns complete metadata and recent measurement history for a selected station.
-    - Accepts stable location identifiers (e.g. 'demo_loc_001') or database IDs (e.g. '1')
-    - Returns HTTP 404 if the station does not exist in demo or production databases
+    - Accepts database location IDs (e.g. '33')
+    - Returns HTTP 404 if the station does not exist in the database
     - Publicly accessible for interactive map popups and side-panels
     """
     detail = get_location_detail(

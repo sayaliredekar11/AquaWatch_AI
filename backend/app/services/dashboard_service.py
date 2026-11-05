@@ -147,6 +147,11 @@ def get_recent_measurements(
                 electrical_conductivity=record.electrical_conductivity,
                 nitrate=record.nitrate,
                 temperature=record.temperature,
+                sample_id=record.sample_id,
+                report_id=record.report_id,
+                wqi_score=record.wqi_score,
+                wqi_category=record.wqi_category,
+                pdf_path=record.pdf_path,
                 measured_at=record.measured_at,
                 created_at=record.created_at,
             )

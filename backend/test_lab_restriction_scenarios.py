@@ -143,7 +143,15 @@ def verify_scenarios():
     # and login is blocked with 403 Forbidden until approved.
     db.query(User).filter(User.email == "att_scenario4@test.org").delete()
     db.commit()
-    r_unauth_register = client.post("/auth/register", json={"name": "Attacker", "email": "att_scenario4@test.org", "password": "Password123!"})
+    r_unauth_register = client.post(
+        "/auth/register",
+        json={
+            "name": "Attacker",
+            "email": "att_scenario4@test.org",
+            "password": "Password123!",
+            "license_number": "MH-WAT-2024-001",
+        },
+    )
     r_unapproved_login = client.post("/auth/login", data={"username": "att_scenario4@test.org", "password": "Password123!"})
     
     # Clean up test user

@@ -97,20 +97,33 @@ export function AuthProvider({ children }) {
     } catch (err) {
       removeToken()
       setUser(null)
+      const errorMsg = err.message || 'Login failed. Please check your credentials.'
+      const isPending =
+        err.status === 403 &&
+        (errorMsg.toLowerCase().includes('pending') || errorMsg.toLowerCase().includes('approval'))
       return {
         success: false,
-        error:
-          err.message || 'Login failed. Please check your credentials.',
+        error: errorMsg,
+        status: err.status,
+        isPending,
       }
     }
   }
 
   /**
-   * Register a new Lab Authority account
+   * Register a new Lab Authority account with verified Laboratory License Number
    */
-  const signup = async ({ name, email, password }) => {
+  const signup = async ({ name, email, password, licenseNumber, license_number, designation, username }) => {
     try {
-      const regUser = await registerApi(name, email, password)
+      const cleanLicense = licenseNumber || license_number
+      const regUser = await registerApi({
+        name,
+        email,
+        password,
+        license_number: cleanLicense,
+        designation,
+        username,
+      })
       if (regUser && regUser.is_active === false) {
         return {
           success: true,

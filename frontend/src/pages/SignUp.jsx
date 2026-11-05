@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Navigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { validateLicenseApi } from '../services/api'
 import {
   FlaskConical,
   Lock,
@@ -14,14 +15,19 @@ import {
   Terminal,
   ArrowLeft,
   Clock,
+  Building2,
+  ShieldCheck,
 } from 'lucide-react'
 
 export default function SignUp() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const [licenseNumber, setLicenseNumber] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
+  const [licenseVerifiedLab, setLicenseVerifiedLab] = useState(null)
+  const [validatingLicense, setValidatingLicense] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submittedPending, setSubmittedPending] = useState(false)
@@ -34,12 +40,43 @@ export default function SignUp() {
     return <Navigate to="/dashboard" replace />
   }
 
+  // Pre-flight license validation on blur
+  const handleBlurLicense = async () => {
+    const clean = licenseNumber.trim().toUpperCase()
+    if (!clean) {
+      setLicenseVerifiedLab(null)
+      return
+    }
+
+    setValidatingLicense(true)
+    try {
+      const res = await validateLicenseApi(clean)
+      if (res.valid) {
+        setLicenseVerifiedLab(res)
+        setError('')
+      } else {
+        setLicenseVerifiedLab(null)
+      }
+    } catch (_) {
+      setLicenseVerifiedLab(null)
+    } finally {
+      setValidatingLicense(false)
+    }
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
 
+    const cleanLicense = licenseNumber.trim().toUpperCase()
+
     if (!name.trim() || !email.trim() || !password || !confirmPassword) {
       setError('All fields are required.')
+      return
+    }
+
+    if (!cleanLicense) {
+      setError('Laboratory License Number is required for registration.')
       return
     }
 
@@ -60,6 +97,7 @@ export default function SignUp() {
         name: name.trim(),
         email: email.trim(),
         password,
+        licenseNumber: cleanLicense,
       })
 
       if (result.success) {
@@ -79,11 +117,11 @@ export default function SignUp() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-65px)] bg-mist flex items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
-      <div className="w-full max-w-lg space-y-6">
+    <div className="min-h-[calc(100vh-65px)] bg-mist flex items-center justify-center px-4 py-12 sm:px-6 lg:px-8 animate-fade-in">
+      <div className="w-full max-w-lg space-y-6 animate-fade-slide-up">
         {/* Header */}
         <div className="text-center space-y-2">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-ocean/10 text-ocean mb-1">
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-ocean/10 text-ocean mb-1 transition-transform hover:scale-105">
             <FlaskConical className="h-6 w-6" />
           </div>
           <div className="inline-block rounded-full bg-slate-900 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-white">
@@ -98,7 +136,7 @@ export default function SignUp() {
         </div>
 
         {/* Signup Card */}
-        <div className="rounded-xl border border-slate-200/80 bg-white p-6 sm:p-8 shadow-sm space-y-6">
+        <div className="rounded-xl border border-slate-200/80 bg-white p-6 sm:p-8 shadow-sm space-y-6 card-hover-subtle">
           {submittedPending ? (
             <div className="space-y-6 text-center py-2">
               <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 mb-1">
@@ -192,6 +230,54 @@ export default function SignUp() {
                       autoComplete="email"
                     />
                   </div>
+                </div>
+
+                {/* Laboratory License Number */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-slate-700 block">
+                      Laboratory License Number <span className="text-rose-500">*</span>
+                    </label>
+                    {validatingLicense && (
+                      <span className="text-[10.5px] text-slate-400 flex items-center gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin text-ocean" />
+                        <span>Verifying...</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Building2 className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                    <input
+                      type="text"
+                      required
+                      value={licenseNumber}
+                      onChange={(e) => {
+                        setLicenseNumber(e.target.value)
+                        setLicenseVerifiedLab(null)
+                      }}
+                      onBlur={handleBlurLicense}
+                      className={`input pl-9 text-slate-800 text-sm uppercase ${
+                        licenseVerifiedLab ? 'border-emerald-400 bg-emerald-50/20' : ''
+                      }`}
+                      placeholder="e.g. MH-WAT-2024-001"
+                      autoComplete="off"
+                    />
+                  </div>
+                  {licenseVerifiedLab ? (
+                    <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/80 rounded-md px-2.5 py-1">
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5 text-emerald-600" />
+                      <div>
+                        <span className="font-semibold">{licenseVerifiedLab.laboratory_name}</span>
+                        {licenseVerifiedLab.district && (
+                          <span className="text-emerald-600 ml-1">({licenseVerifiedLab.district})</span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Must be a valid regulatory license registered with the water quality authority.
+                    </p>
+                  )}
                 </div>
 
                 {/* Password */}

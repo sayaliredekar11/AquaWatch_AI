@@ -75,6 +75,7 @@ def run_tests():
         "name": "Dr. Sarah Connor",
         "email": "new_lab_applicant@aquawatch.ai",
         "password": "LabPassword123!",
+        "license_number": "MH-WAT-2024-001",
     }
     r_signup = client.post("/auth/register", json=signup_payload)
     if r_signup.status_code == 201:
@@ -97,6 +98,7 @@ def run_tests():
         "email": "hacker_tamper@aquawatch.ai",
         "password": "Password123!",
         "role": "SUPERUSER_ADMIN",
+        "license_number": "MH-WAT-2024-001",
     }
     r_tamper = client.post("/auth/register", json=tamper_payload)
     if r_tamper.status_code == 201:
@@ -263,6 +265,7 @@ def run_tests():
             "name": "Dr. Pre Authorized",
             "email": "pre_authorized_lab@aquawatch.ai",
             "password": "PreAuthPassword123!",
+            "license_number": "MH-WAT-2024-001",
         },
     )
     if r_preauth_signup.status_code == 201 and r_preauth_signup.json().get("is_active") is True:

@@ -20,10 +20,11 @@ import hashlib
 import secrets
 import sys
 from typing import Optional
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import engine, Base, SessionLocal
-from app.models import LabInvitation, User, UserRole
+from app.models import LabInvitation, Laboratory, User, UserRole
 from app.security import hash_password
 
 
@@ -43,9 +44,19 @@ def list_users(db: Session):
 def approve_user(db: Session, email: str):
     """Approve a pending Laboratory Authority account and activate it."""
     normalized_email = email.strip().lower()
-    user = db.query(User).filter(User.email == normalized_email).first()
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == normalized_email)
+        .first()
+    )
     if not user:
-        print(f"[ERROR] User with email '{normalized_email}' not found.")
+        user = (
+            db.query(User)
+            .filter(func.lower(User.name) == normalized_email)
+            .first()
+        )
+    if not user:
+        print(f"[ERROR] User with email or name '{normalized_email}' not found.")
         sys.exit(1)
 
     user.role = UserRole.LAB_AUTHORITY
@@ -57,7 +68,11 @@ def approve_user(db: Session, email: str):
 def promote_user(db: Session, email: str):
     """Promote an existing account to LAB_AUTHORITY."""
     normalized_email = email.strip().lower()
-    user = db.query(User).filter(User.email == normalized_email).first()
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == normalized_email)
+        .first()
+    )
     if not user:
         print(f"[ERROR] User with email '{normalized_email}' not found.")
         sys.exit(1)
@@ -75,7 +90,11 @@ def promote_user(db: Session, email: str):
 def demote_user(db: Session, email: str):
     """Demote a LAB_AUTHORITY to NORMAL_USER."""
     normalized_email = email.strip().lower()
-    user = db.query(User).filter(User.email == normalized_email).first()
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == normalized_email)
+        .first()
+    )
     if not user:
         print(f"[ERROR] User with email '{normalized_email}' not found.")
         sys.exit(1)
@@ -180,9 +199,59 @@ def list_invitations(db: Session):
     print("=" * 75)
 
 
+def list_laboratories(db: Session):
+    """List all registered laboratory licenses and their status."""
+    labs = db.query(Laboratory).order_by(Laboratory.id).all()
+    print("=" * 85)
+    print(f"{'ID':<5} {'License Number':<22} {'Laboratory Name':<38} {'District':<10} {'Status':<8}")
+    print("=" * 85)
+    for l in labs:
+        status_str = "ACTIVE" if l.is_active else "INACTIVE"
+        dist = l.district or "-"
+        print(f"{l.id:<5} {l.license_number:<22} {l.name[:36]:<38} {dist:<10} {status_str:<8}")
+    print("=" * 85)
+
+
+def register_laboratory(
+    db: Session,
+    license_number: str,
+    name: str,
+    district: Optional[str] = None,
+    state: str = "Maharashtra",
+    issuing_authority: Optional[str] = None,
+    is_active: bool = True,
+):
+    """Register or update an authorized laboratory license."""
+    clean_license = license_number.strip().upper()
+    lab = db.query(Laboratory).filter(Laboratory.license_number == clean_license).first()
+    if not lab:
+        lab = Laboratory(
+            license_number=clean_license,
+            name=name.strip(),
+            district=district.strip() if district else None,
+            state=state.strip() if state else "Maharashtra",
+            issuing_authority=issuing_authority.strip() if issuing_authority else "Maharashtra Water Quality Regulatory Authority",
+            is_active=is_active,
+        )
+        db.add(lab)
+        db.commit()
+        db.refresh(lab)
+        print(f"[SUCCESS] Registered new laboratory #{lab.id}: '{lab.name}' (License: {lab.license_number}, Status: {'ACTIVE' if lab.is_active else 'INACTIVE'}).")
+    else:
+        lab.name = name.strip()
+        if district:
+            lab.district = district.strip()
+        if issuing_authority:
+            lab.issuing_authority = issuing_authority.strip()
+        lab.is_active = is_active
+        db.commit()
+        db.refresh(lab)
+        print(f"[SUCCESS] Updated laboratory #{lab.id}: '{lab.name}' (License: {lab.license_number}, Status: {'ACTIVE' if lab.is_active else 'INACTIVE'}).")
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="AquaWatch AI - Safe Administrative Management for LAB_AUTHORITY Accounts"
+        description="AquaWatch AI - Safe Administrative Management for LAB_AUTHORITY Accounts & Licenses"
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
@@ -220,11 +289,27 @@ def main():
         action="store_true",
         help="List recent invitations and their active/used/expired status",
     )
+    group.add_argument(
+        "--list-labs",
+        action="store_true",
+        help="List all registered authorized laboratory licenses and their status",
+    )
+    group.add_argument(
+        "--register-lab",
+        action="store_true",
+        help="Register a new authorized laboratory license (requires --license and --lab-name)",
+    )
 
     parser.add_argument("--name", help="User full name (for --create)")
     parser.add_argument("--email", help="User email address (for --create, --promote, or --invite)")
     parser.add_argument("--password", help="User password (for --create)")
     parser.add_argument("--hours", type=int, default=48, help="Invitation validity in hours (default 48)")
+
+    parser.add_argument("--license", help="Laboratory License Number (for --register-lab)")
+    parser.add_argument("--lab-name", help="Official Laboratory Name (for --register-lab)")
+    parser.add_argument("--district", help="District for laboratory (optional for --register-lab)")
+    parser.add_argument("--authority", help="Issuing regulatory authority (optional for --register-lab)")
+    parser.add_argument("--inactive", action="store_true", help="Register as inactive/suspended license")
 
     args = parser.parse_args()
 
@@ -250,6 +335,20 @@ def main():
             create_invitation(db, email=args.email, hours=args.hours)
         elif args.list_invites:
             list_invitations(db)
+        elif args.list_labs:
+            list_laboratories(db)
+        elif args.register_lab:
+            if not args.license or not args.lab_name:
+                print("[ERROR] --register-lab requires --license and --lab-name.")
+                sys.exit(1)
+            register_laboratory(
+                db,
+                license_number=args.license,
+                name=args.lab_name,
+                district=args.district,
+                issuing_authority=args.authority,
+                is_active=not args.inactive,
+            )
     finally:
         db.close()
 

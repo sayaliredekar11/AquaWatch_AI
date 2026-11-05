@@ -1,9 +1,146 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-body { @apply bg-mist text-ink antialiased; font-family: 'Segoe UI', system-ui, sans-serif; }
-.input { @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ocean; }
-.btn { @apply rounded-md px-4 py-2 text-sm font-medium transition-colors; }
-.btn-primary { @apply btn bg-ocean text-white hover:bg-cyan-800; }
-.btn-ghost { @apply btn border border-ocean text-ocean hover:bg-cyan-50; }
-.search-location-pin { background: transparent !important; border: none !important; }
+
+body {
+  @apply bg-mist text-ink antialiased;
+  font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+}
+
+.input {
+  @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 transition-all duration-200 focus:outline-none focus:border-ocean focus:ring-2 focus:ring-ocean/20;
+}
+
+.btn {
+  @apply rounded-lg px-4 py-2 text-sm font-semibold transition-all duration-200 active:scale-[0.98];
+}
+
+.btn-primary {
+  @apply btn bg-ocean text-white shadow-sm hover:bg-[#0c627a] hover:shadow-md;
+}
+
+.btn-ghost {
+  @apply btn border border-ocean text-ocean hover:bg-cyan-50/70;
+}
+
+.search-location-pin {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* ========================================================================= */
+/* Global Smooth Animation Utilities & Keyframes                             */
+/* ========================================================================= */
+
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeSlideDown {
+  0% {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
+@keyframes floatSlowDelayed {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(6px);
+  }
+}
+
+@keyframes ripplePulse {
+  0% {
+    transform: scale(0.96);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 0.35;
+  }
+  100% {
+    transform: scale(0.96);
+    opacity: 0.7;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-fade-slide-up {
+  animation: fadeSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-fade-slide-down {
+  animation: fadeSlideDown 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-float-slow {
+  animation: floatSlow 5s ease-in-out infinite;
+}
+
+.animate-float-delayed {
+  animation: floatSlowDelayed 6s ease-in-out infinite 1.5s;
+}
+
+.animate-ripple-pulse {
+  animation: ripplePulse 4.5s ease-in-out infinite;
+}
+
+/* Reusable card hover & interactive button utility classes */
+.card-hover {
+  @apply transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-md;
+}
+
+.card-hover-subtle {
+  @apply transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-sm;
+}
+
+.btn-interactive {
+  @apply transition-all duration-200 ease-out active:scale-[0.98];
+}
+
+/* ========================================================================= */
+/* Accessibility: Strict Reduced-Motion Support                              */
+/* ========================================================================= */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

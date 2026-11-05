@@ -18,6 +18,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -104,8 +105,12 @@ def get_current_user(
     except jwt.PyJWTError:
         raise credentials_exception
 
-    # Query current user state from database
-    user = db.query(User).filter(User.email == email).first()
+    # Query current user state from database (case-insensitive email)
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == email.strip().lower())
+        .first()
+    )
     if user is None:
         raise credentials_exception
 
@@ -127,10 +132,12 @@ class RoleChecker:
         self.allowed_roles = allowed_roles
 
     def __call__(self, current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in self.allowed_roles:
+        user_role_val = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+        allowed_vals = [r.value if hasattr(r, "value") else str(r) for r in self.allowed_roles]
+        if user_role_val not in allowed_vals:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access forbidden: Insufficient permissions. Required role: {[r.value for r in self.allowed_roles]}.",
+                detail=f"Access forbidden: Insufficient permissions. Required role: {allowed_vals}.",
             )
         return current_user
 

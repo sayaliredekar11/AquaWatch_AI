@@ -199,7 +199,7 @@ export default function WaterIntelligence() {
   const activeMetricConfig = METRIC_CONFIG[selectedMetric] || METRIC_CONFIG.ph
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8 animate-fade-in">
       {/* Header & Controls */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200/80 pb-5">
         <div>
@@ -353,9 +353,9 @@ export default function WaterIntelligence() {
 
       {/* Active Station Content */}
       {stationHistory && !loadingHistory && (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-fade-slide-up">
           {/* Station Metadata Card */}
-          <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-xs space-y-4">
+          <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-xs space-y-4 card-hover-subtle">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <div className="flex items-center gap-2">
